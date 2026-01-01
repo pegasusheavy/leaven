@@ -1,0 +1,35 @@
+{
+  "name": "@leaven-graphql/core",
+  "version": "0.1.0",
+  "description": "Core GraphQL execution engine for Leaven",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "graphql",
+    "bun",
+    "execution"
+  ],
+  "author": "Pegasus Heavy Industries LLC",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "graphql": "^16.8.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.3.0"
+  },
+  "peerDependencies": {
+    "graphql": "^16.0.0"
+  }
+}

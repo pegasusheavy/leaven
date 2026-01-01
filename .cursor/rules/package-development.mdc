@@ -1,0 +1,128 @@
+---
+description: Guidelines for developing packages in the Leaven monorepo
+globs: ["packages/**/*"]
+alwaysApply: false
+---
+
+# Package Development Guidelines
+
+## Package Structure
+
+Each package follows this structure:
+
+```
+packages/package-name/
+├── package.json
+├── tsconfig.json
+└── src/
+    ├── index.ts          # Public exports only
+    ├── types.ts          # Type definitions
+    ├── feature.ts        # Feature implementation
+    └── feature.test.ts   # Tests for feature
+```
+
+## package.json Template
+
+```json
+{
+  "name": "@leaven/package-name",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "graphql": "^16.12.0"
+  },
+  "peerDependencies": {
+    "@leaven/core": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "license": "Apache-2.0",
+  "author": "Pegasus Heavy Industries LLC"
+}
+```
+
+## tsconfig.json Template
+
+```json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*"]
+}
+```
+
+## Index Exports
+
+Only export public APIs from `index.ts`:
+
+```typescript
+/**
+ * @leaven/package-name - Brief description
+ *
+ * Copyright 2026 Pegasus Heavy Industries LLC
+ * Licensed under the Apache License, Version 2.0
+ */
+
+// Types
+export type { ConfigType, ResultType } from './types';
+
+// Classes
+export { MainClass, HelperClass } from './main';
+
+// Functions
+export { createSomething, helperFunction } from './helpers';
+```
+
+## Inter-Package Dependencies
+
+Use workspace protocol for internal dependencies:
+
+```json
+{
+  "dependencies": {
+    "@leaven/core": "workspace:*",
+    "@leaven/errors": "workspace:*"
+  }
+}
+```
+
+## Adding a New Package
+
+1. Create directory: `packages/new-package/`
+2. Add `package.json` with `@leaven/new-package` name
+3. Add `tsconfig.json` extending base config
+4. Create `src/index.ts` with exports
+5. Add to meta-package `packages/leaven/src/index.ts`
+6. Run `pnpm install` to link workspace
+
+## Bun-Specific APIs
+
+Prefer Bun native APIs over Node.js equivalents:
+
+```typescript
+// ✅ Use Bun APIs
+const hasher = new Bun.CryptoHasher('sha256');
+const file = Bun.file(path);
+const server = Bun.serve({ ... });
+
+// ❌ Avoid Node.js equivalents when Bun has native support
+import crypto from 'crypto';  // Use Bun.CryptoHasher instead
+import fs from 'fs';          // Use Bun.file instead
+```

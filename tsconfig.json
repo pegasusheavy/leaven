@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@leaven-graphql/core": ["packages/core/src"],
+      "@leaven-graphql/schema": ["packages/schema/src"],
+      "@leaven-graphql/http": ["packages/http/src"],
+      "@leaven-graphql/ws": ["packages/ws/src"],
+      "@leaven-graphql/context": ["packages/context/src"],
+      "@leaven-graphql/errors": ["packages/errors/src"],
+      "@leaven-graphql/plugins": ["packages/plugins/src"],
+      "@leaven-graphql/playground": ["packages/playground/src"],
+      "leaven": ["packages/leaven/src"]
+    }
+  },
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/schema" },
+    { "path": "packages/http" },
+    { "path": "packages/ws" },
+    { "path": "packages/context" },
+    { "path": "packages/errors" },
+    { "path": "packages/plugins" },
+    { "path": "packages/playground" },
+    { "path": "packages/leaven" }
+  ]
+}

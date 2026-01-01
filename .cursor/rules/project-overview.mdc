@@ -1,0 +1,59 @@
+---
+description: Leaven project overview and architecture
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Leaven - GraphQL Library for Bun
+
+Leaven is a high-performance GraphQL library designed specifically for the Bun runtime, similar to Mercurius and Apollo.
+
+## Project Structure
+
+This is a **PNPM monorepo** with scoped packages under `@leaven/*`:
+
+```
+packages/
+├── core/          # Core execution engine (parsing, compiling, executing)
+├── context/       # Request context management with AsyncLocalStorage
+├── errors/        # Error handling and formatting
+├── http/          # HTTP server integration for Bun
+├── ws/            # WebSocket/GraphQL subscriptions (graphql-ws protocol)
+├── schema/        # Schema building and merging utilities
+├── plugins/       # Plugin system and built-in plugins
+├── playground/    # GraphQL Playground and GraphiQL integration
+├── nestjs/        # NestJS framework integration
+└── leaven/        # Meta-package that re-exports all modules
+```
+
+## Key Technologies
+
+- **Runtime**: Bun (not Node.js)
+- **Language**: TypeScript with strict type checking
+- **Package Manager**: PNPM (never use npm or yarn)
+- **Testing**: Bun's built-in test runner with Vitest-compatible API
+- **Linting**: ESLint with TypeScript rules
+- **Commits**: Conventional Commits enforced by Commitlint + Husky
+
+## License
+
+Apache 2.0 - Pegasus Heavy Industries LLC
+
+## Important Commands
+
+```bash
+pnpm install          # Install dependencies
+pnpm test             # Run all tests with coverage
+pnpm lint             # Run ESLint
+pnpm lint:fix         # Run ESLint with auto-fix
+pnpm build            # Build all packages
+pnpm typecheck        # Type check all packages
+```
+
+## Architecture Principles
+
+1. **Modularity**: Each package is self-contained with clear responsibilities
+2. **Performance**: Optimized for Bun runtime, uses native Bun APIs where possible
+3. **Type Safety**: Full TypeScript with strict mode, explicit types everywhere
+4. **Extensibility**: Plugin system for customization without core modifications
+5. **Standards Compliance**: Follows GraphQL specification strictly

@@ -1,0 +1,79 @@
+{
+  "name": "leaven",
+  "version": "0.1.0",
+  "description": "A high-performance GraphQL library for the Bun runtime",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    },
+    "./core": {
+      "import": "@leaven-graphql/core",
+      "types": "@leaven-graphql/core"
+    },
+    "./schema": {
+      "import": "@leaven-graphql/schema",
+      "types": "@leaven-graphql/schema"
+    },
+    "./http": {
+      "import": "@leaven-graphql/http",
+      "types": "@leaven-graphql/http"
+    },
+    "./ws": {
+      "import": "@leaven-graphql/ws",
+      "types": "@leaven-graphql/ws"
+    },
+    "./context": {
+      "import": "@leaven-graphql/context",
+      "types": "@leaven-graphql/context"
+    },
+    "./errors": {
+      "import": "@leaven-graphql/errors",
+      "types": "@leaven-graphql/errors"
+    },
+    "./plugins": {
+      "import": "@leaven-graphql/plugins",
+      "types": "@leaven-graphql/plugins"
+    },
+    "./playground": {
+      "import": "@leaven-graphql/playground",
+      "types": "@leaven-graphql/playground"
+    }
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "graphql",
+    "bun",
+    "api",
+    "server",
+    "typescript",
+    "apollo",
+    "mercurius"
+  ],
+  "author": "Pegasus Heavy Industries LLC",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@leaven-graphql/context": "workspace:*",
+    "@leaven-graphql/core": "workspace:*",
+    "@leaven-graphql/errors": "workspace:*",
+    "@leaven-graphql/http": "workspace:*",
+    "@leaven-graphql/playground": "workspace:*",
+    "@leaven-graphql/plugins": "workspace:*",
+    "@leaven-graphql/schema": "workspace:*",
+    "@leaven-graphql/ws": "workspace:*",
+    "graphql": "^16.8.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.3.0"
+  },
+  "peerDependencies": {
+    "graphql": "^16.0.0"
+  }
+}

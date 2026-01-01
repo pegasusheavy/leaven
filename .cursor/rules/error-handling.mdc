@@ -1,0 +1,137 @@
+---
+description: Error handling patterns for Leaven
+globs: ["packages/**/*.ts"]
+alwaysApply: false
+---
+
+# Error Handling
+
+## Error Classes
+
+Use the error classes from `@leaven/errors`:
+
+```typescript
+import {
+  LeavenError,
+  ValidationError,
+  AuthenticationError,
+  AuthorizationError,
+  NotFoundError,
+  RateLimitError,
+  ComplexityError,
+  DepthLimitError,
+  InputError,
+} from '@leaven/errors';
+```
+
+## Error Hierarchy
+
+```
+LeavenError (base)
+├── ValidationError      # Schema/input validation failures
+├── AuthenticationError  # 401 - Not authenticated
+├── AuthorizationError   # 403 - Not authorized
+├── NotFoundError        # 404 - Resource not found
+├── RateLimitError       # 429 - Rate limit exceeded
+├── ComplexityError      # Query too complex
+├── DepthLimitError      # Query too deep
+└── InputError           # Invalid input value
+```
+
+## Creating Errors
+
+```typescript
+// Basic error
+throw new LeavenError('Something went wrong', ErrorCode.INTERNAL_ERROR);
+
+// With options
+throw new LeavenError('Custom error', ErrorCode.BAD_REQUEST, {
+  statusCode: 400,
+  extensions: { field: 'email' },
+  originalError: caughtError,
+});
+
+// Specialized errors
+throw new AuthenticationError('Token expired');
+
+throw new NotFoundError('User not found', {
+  resourceType: 'User',
+  resourceId: userId,
+});
+
+throw new ValidationError('Invalid input', [
+  { field: 'email', message: 'Invalid email format' },
+  { field: 'age', message: 'Must be positive number' },
+]);
+```
+
+## Error Codes
+
+```typescript
+import { ErrorCode } from '@leaven/errors';
+
+ErrorCode.INTERNAL_ERROR        // Generic server error
+ErrorCode.VALIDATION_ERROR      // Input validation failed
+ErrorCode.UNAUTHENTICATED       // Authentication required
+ErrorCode.FORBIDDEN             // Access denied
+ErrorCode.NOT_FOUND             // Resource not found
+ErrorCode.RATE_LIMITED          // Too many requests
+ErrorCode.COMPLEXITY_LIMIT      // Query too complex
+ErrorCode.DEPTH_LIMIT           // Query too deep
+ErrorCode.INVALID_INPUT         // Invalid input value
+ErrorCode.PERSISTED_QUERY_NOT_FOUND
+ErrorCode.PERSISTED_QUERY_INVALID
+```
+
+## Error Formatting
+
+```typescript
+import { formatError, maskError } from '@leaven/errors';
+
+// Format for GraphQL response
+const formatted = formatError(error);
+// { message: '...', extensions: { code: '...' } }
+
+// Mask internal errors in production
+const safe = maskError(error, { production: true });
+// Internal errors become "Internal server error"
+```
+
+## Error Handling in Resolvers
+
+```typescript
+const resolve = async (_, args, context) => {
+  try {
+    const result = await riskyOperation();
+    return result;
+  } catch (error) {
+    // Re-throw Leaven errors as-is
+    if (error instanceof LeavenError) {
+      throw error;
+    }
+
+    // Wrap unknown errors
+    throw new LeavenError(
+      'Operation failed',
+      ErrorCode.INTERNAL_ERROR,
+      { originalError: error as Error }
+    );
+  }
+};
+```
+
+## HTTP Status Codes
+
+Errors map to HTTP status codes automatically:
+
+| Error Class          | HTTP Status |
+|---------------------|-------------|
+| ValidationError     | 400         |
+| InputError          | 400         |
+| ComplexityError     | 400         |
+| DepthLimitError     | 400         |
+| AuthenticationError | 401         |
+| AuthorizationError  | 403         |
+| NotFoundError       | 404         |
+| RateLimitError      | 429         |
+| LeavenError (default)| 500        |

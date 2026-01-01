@@ -1,0 +1,176 @@
+---
+description: GraphQL-specific patterns and conventions for Leaven
+globs: ["packages/**/*.ts"]
+alwaysApply: false
+---
+
+# GraphQL Patterns
+
+## Schema Definition
+
+Use the programmatic GraphQL.js API for schema building:
+
+```typescript
+import {
+  GraphQLSchema,
+  GraphQLObjectType,
+  GraphQLString,
+  GraphQLNonNull,
+  GraphQLList,
+} from 'graphql';
+
+const schema = new GraphQLSchema({
+  query: new GraphQLObjectType({
+    name: 'Query',
+    fields: {
+      user: {
+        type: UserType,
+        args: {
+          id: { type: new GraphQLNonNull(GraphQLString) },
+        },
+        resolve: (_, { id }, context) => context.loaders.user.load(id),
+      },
+    },
+  }),
+});
+```
+
+## Resolver Patterns
+
+### Type Safety
+
+Always type resolver arguments:
+
+```typescript
+interface UserArgs {
+  id: string;
+}
+
+interface Context {
+  user?: { id: string };
+  loaders: DataLoaders;
+}
+
+const resolver: GraphQLFieldResolver<unknown, Context, UserArgs> = (
+  _parent,
+  args,
+  context
+) => {
+  return context.loaders.user.load(args.id);
+};
+```
+
+### Error Handling
+
+Use Leaven error classes:
+
+```typescript
+import { AuthenticationError, NotFoundError } from '@leaven/errors';
+
+const resolve = async (_, { id }, context) => {
+  if (!context.user) {
+    throw new AuthenticationError();
+  }
+
+  const result = await context.db.find(id);
+  if (!result) {
+    throw new NotFoundError('User not found', { resourceId: id });
+  }
+
+  return result;
+};
+```
+
+## Execution Flow
+
+```
+Request → Parse → Validate → Compile → Execute → Format Response
+   ↓         ↓        ↓          ↓         ↓           ↓
+  HTTP    Cache    Schema    Cache     Resolvers    Errors
+```
+
+## Document Caching
+
+Use the built-in LRU cache for parsed documents:
+
+```typescript
+import { DocumentCache } from '@leaven/core';
+
+const cache = new DocumentCache({
+  maxSize: 1000,
+  ttl: 3600000, // 1 hour
+});
+```
+
+## Subscription Patterns
+
+Use the graphql-ws protocol:
+
+```typescript
+import { PubSub, createWebSocketHandler } from '@leaven/ws';
+
+const pubsub = new PubSub();
+
+// Publish events
+pubsub.publish('USER_CREATED', { userCreated: newUser });
+
+// Subscribe in resolvers
+const subscribe = () => pubsub.asyncIterator(['USER_CREATED']);
+```
+
+## Plugin System
+
+Create plugins using the lifecycle hooks:
+
+```typescript
+import { createPlugin } from '@leaven/plugins';
+
+const myPlugin = createPlugin(
+  {
+    name: 'my-plugin',
+    version: '1.0.0',
+    description: 'Does something useful',
+  },
+  {
+    async beforeExecute(document, context) {
+      // Pre-execution logic
+    },
+    async afterExecute(response, context) {
+      // Post-execution logic
+      return response;
+    },
+  }
+);
+```
+
+## Context Management
+
+Use AsyncLocalStorage for request-scoped context:
+
+```typescript
+import { ContextStore, ContextBuilder } from '@leaven/context';
+
+const store = new ContextStore<AppContext>();
+
+// In request handler
+store.runAsync(context, async () => {
+  const result = await executor.execute(request);
+  const ctx = store.requireContext(); // Access anywhere
+  return result;
+});
+```
+
+## Query Complexity
+
+Implement complexity analysis for DoS protection:
+
+```typescript
+const executor = new LeavenExecutor({
+  schema,
+  compilerOptions: {
+    calculateComplexity: true,
+    complexityCalculator: (field, depth) => 1 + (depth * 0.5),
+  },
+  maxComplexity: 100,
+});
+```

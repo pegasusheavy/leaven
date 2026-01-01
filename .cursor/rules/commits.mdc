@@ -1,0 +1,93 @@
+---
+description: Commit message conventions for Leaven
+globs: ["**/*"]
+alwaysApply: false
+---
+
+# Commit Message Conventions
+
+This project uses **Conventional Commits** enforced by Commitlint and Husky.
+
+## Format
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+## Types
+
+| Type       | Description                                      |
+|------------|--------------------------------------------------|
+| `feat`     | New feature                                      |
+| `fix`      | Bug fix                                          |
+| `docs`     | Documentation only changes                       |
+| `style`    | Code style (formatting, missing semi-colons)     |
+| `refactor` | Code change that neither fixes bug nor adds feature |
+| `perf`     | Performance improvement                          |
+| `test`     | Adding or updating tests                         |
+| `build`    | Build system or external dependencies            |
+| `ci`       | CI configuration                                 |
+| `chore`    | Other changes that don't modify src or test      |
+| `revert`   | Reverts a previous commit                        |
+
+## Scopes
+
+Use package names as scopes:
+
+- `core` - @leaven/core
+- `context` - @leaven/context
+- `errors` - @leaven/errors
+- `http` - @leaven/http
+- `ws` - @leaven/ws
+- `schema` - @leaven/schema
+- `plugins` - @leaven/plugins
+- `playground` - @leaven/playground
+- `deps` - Dependency updates
+- `config` - Configuration changes
+
+## Examples
+
+```bash
+# Feature
+feat(core): add query complexity calculation
+
+# Bug fix
+fix(http): handle malformed JSON in request body
+
+# Documentation
+docs(readme): update installation instructions
+
+# Tests
+test(core): add tests for document cache eviction
+
+# Breaking change (note the !)
+feat(schema)!: change SchemaBuilder API to use fluent pattern
+
+BREAKING CHANGE: SchemaBuilder.addType() now returns `this` instead of the type.
+```
+
+## Pre-commit Hooks
+
+The following checks run automatically on commit:
+
+1. **ESLint** - Code linting
+2. **Tests** - All unit tests must pass
+
+If either fails, the commit is rejected.
+
+## Best Practices
+
+1. **Keep commits atomic**: One logical change per commit
+2. **Write clear descriptions**: Explain what changed, not how
+3. **Use imperative mood**: "add feature" not "added feature"
+4. **Reference issues**: Include issue numbers when applicable
+
+```bash
+fix(core): resolve memory leak in document cache
+
+Closes #123
+```

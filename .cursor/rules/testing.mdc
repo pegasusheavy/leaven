@@ -1,0 +1,139 @@
+---
+description: Testing guidelines for Leaven
+globs: ["packages/**/*.test.ts"]
+alwaysApply: true
+---
+
+# Testing Guidelines
+
+## Testing Framework
+
+Use **Bun's built-in test runner** (NOT Jest, NOT Vitest separately):
+
+```typescript
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+```
+
+## Test File Location
+
+Test files live alongside source files with `.test.ts` suffix:
+
+```
+packages/core/src/
+├── cache.ts
+├── cache.test.ts      ← Test file here
+├── executor.ts
+└── executor.test.ts   ← Test file here
+```
+
+## Test Structure
+
+```typescript
+import { describe, test, expect, beforeEach } from 'bun:test';
+
+describe('ClassName', () => {
+  let instance: ClassName;
+
+  beforeEach(() => {
+    instance = new ClassName();
+  });
+
+  describe('methodName', () => {
+    test('should do expected behavior', () => {
+      const result = instance.methodName();
+      expect(result).toBe(expectedValue);
+    });
+
+    test('should handle edge case', () => {
+      // ...
+    });
+
+    test('should throw on invalid input', () => {
+      expect(() => instance.methodName(null)).toThrow();
+    });
+  });
+});
+```
+
+## Coverage Requirements
+
+**Target: 90% code coverage minimum**
+
+Current coverage: ~97% (maintain or improve)
+
+Run tests with coverage:
+```bash
+pnpm test                          # Runs with coverage
+pnpm test:coverage                 # Detailed coverage report
+```
+
+## Test Categories
+
+### Unit Tests
+- Test individual functions/methods in isolation
+- Mock external dependencies
+- Fast execution
+
+### Integration Tests
+- Test multiple components working together
+- Use real GraphQL schemas
+- Test full execution flow
+
+## Mocking
+
+For GraphQL testing, create simple test schemas:
+
+```typescript
+const schema = new GraphQLSchema({
+  query: new GraphQLObjectType({
+    name: 'Query',
+    fields: {
+      hello: {
+        type: GraphQLString,
+        resolve: () => 'world',
+      },
+    },
+  }),
+});
+```
+
+## Async Testing
+
+```typescript
+test('should handle async operations', async () => {
+  const result = await executor.execute(query);
+  expect(result.data).toBeDefined();
+});
+```
+
+## Error Testing
+
+```typescript
+test('should throw ValidationError for invalid input', () => {
+  expect(() => {
+    validate(invalidInput);
+  }).toThrow(ValidationError);
+});
+
+// Or for async:
+test('should reject with error', async () => {
+  await expect(asyncFn()).rejects.toThrow('error message');
+});
+```
+
+## Test Naming
+
+Use descriptive test names that explain:
+1. What is being tested
+2. Under what conditions
+3. Expected outcome
+
+```typescript
+// ✅ Good
+test('should return cached document when query exists in cache', () => {});
+test('should evict oldest entry when cache reaches max size', () => {});
+
+// ❌ Bad
+test('cache works', () => {});
+test('test1', () => {});
+```

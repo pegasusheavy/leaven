@@ -1,0 +1,148 @@
+---
+description: Bun runtime specifics for Leaven
+globs: ["packages/**/*.ts"]
+alwaysApply: false
+---
+
+# Bun Runtime Guidelines
+
+## Why Bun?
+
+Leaven is designed specifically for Bun, taking advantage of:
+
+- Faster startup times
+- Built-in TypeScript support
+- Native test runner
+- Optimized HTTP server
+- Native WebSocket support
+- Built-in crypto APIs
+
+## Bun APIs to Use
+
+### File System
+
+```typescript
+// ✅ Use Bun.file for file operations
+const file = Bun.file(path);
+const exists = await file.exists();
+const content = await file.text();
+
+// ❌ Avoid Node.js fs
+import fs from 'fs';  // Don't use
+```
+
+### Cryptography
+
+```typescript
+// ✅ Use Bun.CryptoHasher
+const hasher = new Bun.CryptoHasher('sha256');
+hasher.update(data);
+const hash = hasher.digest('hex');
+
+// ❌ Avoid Node.js crypto
+import crypto from 'crypto';  // Don't use
+```
+
+### HTTP Server
+
+```typescript
+// ✅ Use Bun.serve
+const server = Bun.serve({
+  port: 4000,
+  fetch: (request) => handleRequest(request),
+  websocket: {
+    open: (ws) => { /* ... */ },
+    message: (ws, message) => { /* ... */ },
+    close: (ws) => { /* ... */ },
+  },
+});
+
+// Access server info
+console.log(`Listening on ${server.hostname}:${server.port}`);
+```
+
+### WebSockets
+
+```typescript
+// ✅ Use Bun's native WebSocket in servers
+import type { ServerWebSocket } from 'bun';
+
+interface SocketData {
+  connectionId: string;
+  authenticated: boolean;
+}
+
+const websocket = {
+  open(ws: ServerWebSocket<SocketData>) {
+    ws.data.connectionId = generateId();
+  },
+  message(ws: ServerWebSocket<SocketData>, message: string | Buffer) {
+    // Handle message
+  },
+};
+```
+
+### Glob Patterns
+
+```typescript
+// ✅ Use Bun.Glob
+import { Glob } from 'bun';
+
+const glob = new Glob('**/*.graphql');
+for await (const file of glob.scan('.')) {
+  // Process file
+}
+```
+
+## Node.js Compatibility
+
+When Node.js APIs are needed, use the `node:` prefix:
+
+```typescript
+// ✅ Correct import for Node.js built-ins
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { join, resolve } from 'node:path';
+
+// ❌ Don't use bare imports for Node.js modules
+import { AsyncLocalStorage } from 'async_hooks';  // Wrong
+```
+
+## Performance Tips
+
+1. **Avoid unnecessary async**: Bun is fast synchronously
+   ```typescript
+   // ✅ Prefer sync when appropriate
+   const hash = Bun.hash(data);
+
+   // ❌ Don't await when not needed
+   const hash = await computeHash(data);  // If sync is possible
+   ```
+
+2. **Use streaming for large responses**:
+   ```typescript
+   return new Response(stream, {
+     headers: { 'Content-Type': 'application/json' },
+   });
+   ```
+
+3. **Leverage Bun's JIT compilation**: Hot paths get optimized automatically
+
+## Testing with Bun
+
+```typescript
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
+
+describe('Feature', () => {
+  test('should work', () => {
+    expect(true).toBe(true);
+  });
+});
+```
+
+Run tests:
+```bash
+bun test                    # Run all tests
+bun test --coverage         # With coverage
+bun test --watch            # Watch mode
+bun test packages/core/     # Specific package
+```

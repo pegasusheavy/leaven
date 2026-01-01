@@ -1,0 +1,132 @@
+---
+description: Code style and conventions for Leaven
+globs: ["packages/**/*.ts"]
+alwaysApply: true
+---
+
+# Code Style Guidelines
+
+## TypeScript Conventions
+
+### Visibility Modifiers (REQUIRED)
+
+All class members MUST have explicit visibility modifiers:
+
+```typescript
+// ✅ CORRECT
+export class MyClass {
+  public readonly name: string;
+  private cache: Map<string, unknown>;
+  protected config: Config;
+
+  constructor(name: string) {  // Constructors don't need 'public'
+    this.name = name;
+  }
+
+  public getData(): string {
+    return this.name;
+  }
+
+  private processInternal(): void {
+    // ...
+  }
+}
+
+// ❌ WRONG - Missing visibility modifiers
+export class MyClass {
+  readonly name: string;        // Missing 'public'
+  getData(): string { ... }     // Missing 'public'
+}
+```
+
+### Unused Variables
+
+Prefix unused variables with underscore:
+
+```typescript
+// ✅ CORRECT
+function handler(_event: Event, data: Data) {
+  return data.value;
+}
+
+// ❌ WRONG
+function handler(event: Event, data: Data) {  // 'event' unused
+  return data.value;
+}
+```
+
+### Return Types
+
+Always specify return types for public methods:
+
+```typescript
+// ✅ CORRECT
+public execute(): ExecutionResult {
+  // ...
+}
+
+// ⚠️ Warning (but allowed in some cases)
+public execute() {
+  // ...
+}
+```
+
+## Import Conventions
+
+1. Use `type` imports for type-only imports:
+   ```typescript
+   import type { GraphQLSchema } from 'graphql';
+   import { execute, subscribe } from 'graphql';
+   ```
+
+2. Order imports:
+   - External packages first
+   - Internal packages second
+   - Relative imports last
+
+3. Use Node.js built-in imports with `node:` prefix:
+   ```typescript
+   import { AsyncLocalStorage } from 'node:async_hooks';
+   ```
+
+## Documentation
+
+All public APIs must have JSDoc comments:
+
+```typescript
+/**
+ * Execute a GraphQL request
+ *
+ * @param request - The GraphQL request to execute
+ * @param context - Optional execution context
+ * @returns The execution result
+ */
+public async execute<TData>(
+  request: GraphQLRequest,
+  context?: unknown
+): Promise<ExecutionResult<TData>> {
+  // ...
+}
+```
+
+## File Headers
+
+All source files should have the standard header:
+
+```typescript
+/**
+ * @leaven/package-name - Brief description
+ *
+ * Copyright 2026 Pegasus Heavy Industries LLC
+ * Licensed under the Apache License, Version 2.0
+ */
+```
+
+## Naming Conventions
+
+- **Classes**: PascalCase (`DocumentCache`, `LeavenExecutor`)
+- **Interfaces/Types**: PascalCase (`ExecutorConfig`, `GraphQLRequest`)
+- **Functions**: camelCase (`parseDocument`, `createExecutor`)
+- **Constants**: UPPER_SNAKE_CASE (`ERROR_CODES`, `DEFAULT_TTL`)
+- **Files**: kebab-case (`document-cache.ts`, `error-codes.ts`)
+  - Exception: Test files use `.test.ts` suffix

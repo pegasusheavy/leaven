@@ -1,0 +1,36 @@
+{
+  "name": "@leaven-graphql/plugins",
+  "version": "0.1.0",
+  "description": "Plugin system for Leaven GraphQL",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "graphql",
+    "bun",
+    "plugins"
+  ],
+  "author": "Pegasus Heavy Industries LLC",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@leaven-graphql/core": "workspace:*",
+    "graphql": "^16.8.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.3.0"
+  },
+  "peerDependencies": {
+    "graphql": "^16.0.0"
+  }
+}

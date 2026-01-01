@@ -1,0 +1,54 @@
+{
+  "name": "@leaven-graphql/nestjs",
+  "version": "0.1.0",
+  "description": "NestJS integration for Leaven GraphQL",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@leaven-graphql/core": "workspace:*",
+    "@leaven-graphql/context": "workspace:*",
+    "@leaven-graphql/errors": "workspace:*"
+  },
+  "peerDependencies": {
+    "@nestjs/common": ">=10.0.0",
+    "@nestjs/core": ">=10.0.0",
+    "@nestjs/graphql": ">=12.0.0",
+    "graphql": "^16.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/common": "^11.0.20",
+    "@nestjs/core": "^11.0.20",
+    "@nestjs/graphql": "^13.0.6",
+    "@nestjs/testing": "^11.0.20",
+    "graphql": "^16.12.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typescript": "^5.9.3"
+  },
+  "keywords": [
+    "nestjs",
+    "graphql",
+    "leaven",
+    "bun",
+    "api"
+  ],
+  "license": "Apache-2.0",
+  "author": "Pegasus Heavy Industries LLC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/PegasusHeavyIndustries/leaven.git",
+    "directory": "packages/nestjs"
+  }
+}
