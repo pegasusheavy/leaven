@@ -1,0 +1,55 @@
+{
+  "name": "Leaven Documentation",
+  "short_name": "Leaven Docs",
+  "description": "Official documentation for Leaven - a high-performance GraphQL library for Bun",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "lang": "en-US",
+  "categories": ["developer tools", "documentation", "education"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/desktop.png",
+      "sizes": "1920x1080",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Leaven Documentation Homepage"
+    },
+    {
+      "src": "/screenshots/mobile.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Leaven Documentation Mobile View"
+    }
+  ],
+  "related_applications": [
+    {
+      "platform": "npm",
+      "url": "https://www.npmjs.com/package/@leaven-graphql/core",
+      "id": "@leaven-graphql/core"
+    }
+  ],
+  "prefer_related_applications": false
+}

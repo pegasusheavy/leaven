@@ -1,0 +1,18 @@
+/* TEAM */
+
+Developer: Pegasus Heavy Industries LLC
+Site: https://pegasusheavyindustries.com
+Location: United States
+
+/* THANKS */
+
+GraphQL Foundation - For the GraphQL specification
+Bun Team - For the blazingly fast JavaScript runtime
+NestJS Team - For the excellent framework
+
+/* SITE */
+
+Last update: 2026/01/01
+Standards: HTML5, CSS3, TypeScript, Angular
+Components: Angular 19, Tailwind CSS 4
+Software: Visual Studio Code, Cursor

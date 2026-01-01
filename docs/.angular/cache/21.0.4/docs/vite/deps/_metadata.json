@@ -1,0 +1,79 @@
+{
+  "hash": "24eb1cbe",
+  "configHash": "6892f60b",
+  "lockfileHash": "a8e6fec7",
+  "browserHash": "c3a08fdf",
+  "optimized": {
+    "@angular/common": {
+      "src": "../../../../../../../node_modules/.pnpm/@angular+common@21.0.6_@angular+core@21.0.6_@angular+compiler@21.0.6_rxjs@7.8.2__rxjs@7.8.2/node_modules/@angular/common/fesm2022/common.mjs",
+      "file": "@angular_common.js",
+      "fileHash": "7e7db693",
+      "needsInterop": false
+    },
+    "@angular/core": {
+      "src": "../../../../../../../node_modules/.pnpm/@angular+core@21.0.6_@angular+compiler@21.0.6_rxjs@7.8.2/node_modules/@angular/core/fesm2022/core.mjs",
+      "file": "@angular_core.js",
+      "fileHash": "8f649df8",
+      "needsInterop": false
+    },
+    "@angular/platform-browser": {
+      "src": "../../../../../../../node_modules/.pnpm/@angular+platform-browser@21.0.6_@angular+common@21.0.6_@angular+core@21.0.6_@angular+c_f090f20c0fac2553afd88c4503dc1c51/node_modules/@angular/platform-browser/fesm2022/platform-browser.mjs",
+      "file": "@angular_platform-browser.js",
+      "fileHash": "82bb2bd3",
+      "needsInterop": false
+    },
+    "@angular/router": {
+      "src": "../../../../../../../node_modules/.pnpm/@angular+router@21.0.6_@angular+common@21.0.6_@angular+core@21.0.6_@angular+compiler@21_cb08b9c9061b42122f8f212538115ccf/node_modules/@angular/router/fesm2022/router.mjs",
+      "file": "@angular_router.js",
+      "fileHash": "86d4d63c",
+      "needsInterop": false
+    },
+    "@fortawesome/angular-fontawesome": {
+      "src": "../../../../../../../node_modules/.pnpm/@fortawesome+angular-fontawesome@4.0.0_@angular+core@21.0.6_@angular+compiler@21.0.6_rxjs@7.8.2_/node_modules/@fortawesome/angular-fontawesome/fesm2022/angular-fontawesome.mjs",
+      "file": "@fortawesome_angular-fontawesome.js",
+      "fileHash": "41245923",
+      "needsInterop": false
+    },
+    "@fortawesome/free-brands-svg-icons": {
+      "src": "../../../../../../../node_modules/.pnpm/@fortawesome+free-brands-svg-icons@7.1.0/node_modules/@fortawesome/free-brands-svg-icons/index.mjs",
+      "file": "@fortawesome_free-brands-svg-icons.js",
+      "fileHash": "a2610e4a",
+      "needsInterop": false
+    },
+    "@fortawesome/free-regular-svg-icons": {
+      "src": "../../../../../../../node_modules/.pnpm/@fortawesome+free-regular-svg-icons@7.1.0/node_modules/@fortawesome/free-regular-svg-icons/index.mjs",
+      "file": "@fortawesome_free-regular-svg-icons.js",
+      "fileHash": "22d7df20",
+      "needsInterop": false
+    },
+    "@fortawesome/free-solid-svg-icons": {
+      "src": "../../../../../../../node_modules/.pnpm/@fortawesome+free-solid-svg-icons@7.1.0/node_modules/@fortawesome/free-solid-svg-icons/index.mjs",
+      "file": "@fortawesome_free-solid-svg-icons.js",
+      "fileHash": "2a7cbf6c",
+      "needsInterop": false
+    },
+    "rxjs/operators": {
+      "src": "../../../../../../../node_modules/.pnpm/rxjs@7.8.2/node_modules/rxjs/dist/esm5/operators/index.js",
+      "file": "rxjs_operators.js",
+      "fileHash": "a24ca2db",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-QMISW4JU": {
+      "file": "chunk-QMISW4JU.js"
+    },
+    "chunk-ZUWEJWSZ": {
+      "file": "chunk-ZUWEJWSZ.js"
+    },
+    "chunk-J3T3BRUF": {
+      "file": "chunk-J3T3BRUF.js"
+    },
+    "chunk-YG5GF4LK": {
+      "file": "chunk-YG5GF4LK.js"
+    },
+    "chunk-GOMI4DH3": {
+      "file": "chunk-GOMI4DH3.js"
+    }
+  }
+}

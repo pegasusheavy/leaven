@@ -1,0 +1,130 @@
+# Leaven - Artisan GraphQL Library for Bun Runtime
+
+> Leaven is a high-performance GraphQL library hand-crafted for the Bun runtime. Like the best bread, it's risen to perfection with document caching, real-time subscriptions, and a delightful developer experience.
+
+## Quick Facts
+
+- **Name**: Leaven (named after the rising agent in bread)
+- **Type**: GraphQL Library
+- **Runtime**: Bun (JavaScript/TypeScript)
+- **License**: Apache 2.0
+- **Author**: Pegasus Heavy Industries LLC
+- **Website**: https://leaven.dev
+- **Repository**: https://github.com/PegasusHeavyIndustries/leaven
+- **Theme**: Bakery/Artisan Bread (because it makes your API rise!)
+
+## Installation (Getting Your Ingredients)
+
+```bash
+# Using Bun
+bun add @leaven-graphql/core graphql
+
+# Using pnpm
+pnpm add @leaven-graphql/core graphql
+
+# Full bakery experience with all packages
+bun add leaven graphql
+```
+
+## Packages (The Pastry Case)
+
+- **@leaven-graphql/core**: The sourdough starter - core execution engine with document caching
+- **@leaven-graphql/http**: The serving counter - HTTP server for Bun with playground
+- **@leaven-graphql/ws**: Hot & fresh delivery - WebSocket subscriptions (graphql-ws)
+- **@leaven-graphql/context**: Kitchen prep station - request context with AsyncLocalStorage
+- **@leaven-graphql/errors**: Burnt batch handler - error handling and formatting
+- **@leaven-graphql/schema**: Recipe blueprints - schema building utilities
+- **@leaven-graphql/plugins**: Secret ingredients - plugin system for extensibility
+- **@leaven-graphql/playground**: Tasting room - GraphQL Playground/GraphiQL
+- **@leaven-graphql/nestjs**: Professional kitchen - NestJS framework integration
+
+## Key Features (Our Specialties)
+
+1. **Blazing Hot Performance**: Fresh from the Bun oven with native APIs
+2. **Buttery Type Safety**: Smooth TypeScript that melts into your workflow
+3. **Flaky Modularity**: Layer by layer, take only what you need
+4. **Plugin Proofing**: Let your API rise with extensible plugins
+5. **Fresh Subscriptions**: Real-time updates hot out of the WebSocket oven
+6. **Playground Patisserie**: Built-in tools for decorating your API
+
+## Basic Recipe (Usage)
+
+```typescript
+import { createServer } from '@leaven-graphql/http';
+import { GraphQLSchema, GraphQLObjectType, GraphQLString } from 'graphql';
+
+// 🧑‍🍳 Preheat your GraphQL oven
+const schema = new GraphQLSchema({
+  query: new GraphQLObjectType({
+    name: 'Query',
+    fields: {
+      hello: {
+        type: GraphQLString,
+        resolve: () => 'Hello, World!',
+      },
+    },
+  }),
+});
+
+const server = createServer({
+  schema,
+  port: 4000,
+  playground: true, // The tasting counter
+});
+
+server.start();
+// 🥖 Fresh API served at http://localhost:4000/graphql
+```
+
+## NestJS Integration (Professional Kitchen)
+
+```typescript
+import { Module } from '@nestjs/common';
+import { LeavenModule } from '@leaven-graphql/nestjs';
+
+@Module({
+  imports: [
+    LeavenModule.forRoot({
+      playground: true,
+      introspection: true,
+      cache: { maxSize: 1000 },
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+## Common Questions (Baker's Tips)
+
+### What is Leaven?
+Leaven is a high-performance GraphQL library hand-crafted for the Bun runtime. Like the best bread, it's risen to perfection with document caching, real-time subscriptions, and a delightful developer experience.
+
+### Why is it called Leaven?
+Leaven is the rising agent in bread - it makes dough rise and become fluffy. Similarly, this library helps your GraphQL API rise to its full potential on Bun!
+
+### How do I start baking with Leaven?
+Simply run "bun add @leaven-graphql/core graphql" to get started. For the full bakery experience, install "leaven" which includes all specialty packages.
+
+### Does Leaven work with NestJS?
+Absolutely! Our @leaven-graphql/nestjs package provides first-class integration - all the tools a professional kitchen needs.
+
+### Can I get fresh updates in real-time?
+Yes! The @leaven-graphql/ws package delivers hot-out-of-the-oven updates via WebSocket.
+
+### What makes Leaven so fast?
+Optimized for Bun's oven with native APIs, LRU document caching, compiled queries, and zero bloat.
+
+### Is Leaven ready for production?
+Our recipes are thoroughly tested with 90%+ coverage. Includes all safety features for enterprise baking!
+
+## Documentation
+
+For complete recipes, visit https://leaven.dev
+
+## Contact
+
+- GitHub: https://github.com/PegasusHeavyIndustries/leaven
+- Issues: https://github.com/PegasusHeavyIndustries/leaven/issues
+
+---
+Baked with ❤️ and ☕ by Pegasus Heavy Industries LLC

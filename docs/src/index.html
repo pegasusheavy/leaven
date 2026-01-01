@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <title>Leaven - High-Performance GraphQL Library for Bun Runtime</title>
+  <base href="/">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <!-- Primary Meta Tags -->
+  <meta name="title" content="Leaven - High-Performance GraphQL Library for Bun Runtime">
+  <meta name="description" content="Leaven is a blazing-fast GraphQL library built for Bun. Features include document caching, real-time subscriptions, NestJS integration, and 90%+ test coverage. Apache 2.0 licensed.">
+  <meta name="keywords" content="GraphQL, Bun, TypeScript, GraphQL library, GraphQL server, real-time subscriptions, WebSocket, NestJS, high-performance, API, JavaScript runtime">
+  <meta name="author" content="Pegasus Heavy Industries LLC">
+  <meta name="robots" content="index, follow">
+  <meta name="language" content="English">
+  <meta name="revisit-after" content="7 days">
+  <meta name="theme-color" content="#3b82f6">
+
+  <!-- Canonical URL -->
+  <link rel="canonical" href="https://leaven.dev/">
+
+  <!-- Open Graph / Facebook -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://leaven.dev/">
+  <meta property="og:title" content="Leaven - High-Performance GraphQL Library for Bun Runtime">
+  <meta property="og:description" content="Blazing-fast GraphQL library built for Bun. Document caching, real-time subscriptions, NestJS integration, and enterprise-ready features.">
+  <meta property="og:image" content="https://leaven.dev/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Leaven GraphQL Library - Fast, Type-safe, Modern">
+  <meta property="og:site_name" content="Leaven Documentation">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:url" content="https://leaven.dev/">
+  <meta name="twitter:title" content="Leaven - High-Performance GraphQL Library for Bun Runtime">
+  <meta name="twitter:description" content="Blazing-fast GraphQL library built for Bun. Document caching, real-time subscriptions, NestJS integration, and enterprise-ready features.">
+  <meta name="twitter:image" content="https://leaven.dev/og-image.png">
+  <meta name="twitter:image:alt" content="Leaven GraphQL Library">
+  <meta name="twitter:creator" content="@PegasusHeavyInd">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+  <link rel="manifest" href="site.webmanifest">
+
+  <!-- Preconnect for performance -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700;9..144,800;9..144,900&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- JSON-LD Structured Data for Organization -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Leaven",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Cross-platform",
+    "description": "A high-performance GraphQL library designed specifically for the Bun runtime. Leaven provides fast query execution, document caching, real-time subscriptions, and seamless NestJS integration.",
+    "url": "https://leaven.dev",
+    "downloadUrl": "https://www.npmjs.com/package/@leaven-graphql/core",
+    "softwareVersion": "0.1.0",
+    "author": {
+      "@type": "Organization",
+      "name": "Pegasus Heavy Industries LLC",
+      "url": "https://pegasusheavyindustries.com"
+    },
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "programmingLanguage": ["TypeScript", "JavaScript"],
+    "runtimePlatform": "Bun",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "aggregateRating": {
+      "@type": "AggregateRating",
+      "ratingValue": "5",
+      "ratingCount": "1"
+    }
+  }
+  </script>
+
+  <!-- JSON-LD for Documentation/TechArticle -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Leaven Documentation",
+    "url": "https://leaven.dev",
+    "description": "Official documentation for Leaven GraphQL library",
+    "potentialAction": {
+      "@type": "SearchAction",
+      "target": {
+        "@type": "EntryPoint",
+        "urlTemplate": "https://leaven.dev/search?q={search_term_string}"
+      },
+      "query-input": "required name=search_term_string"
+    },
+    "publisher": {
+      "@type": "Organization",
+      "name": "Pegasus Heavy Industries LLC",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://leaven.dev/logo.png"
+      }
+    }
+  }
+  </script>
+
+  <!-- JSON-LD FAQ for AEO -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is Leaven?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Leaven is a high-performance GraphQL library designed specifically for the Bun runtime. It provides fast query execution, document caching, real-time subscriptions via WebSocket, plugin architecture, and seamless NestJS integration. Licensed under Apache 2.0 by Pegasus Heavy Industries LLC."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How do I install Leaven?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Install Leaven using your package manager: 'pnpm add @leaven-graphql/core graphql' or 'bun add @leaven-graphql/core graphql'. For full functionality, you can also install @leaven-graphql/http for HTTP server, @leaven-graphql/ws for WebSocket subscriptions, and @leaven-graphql/nestjs for NestJS integration."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is Leaven compatible with NestJS?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, Leaven provides first-class NestJS integration through the @leaven-graphql/nestjs package. It includes LeavenModule for easy configuration, decorators like @Context and @Args, authentication guards, role-based access control, and interceptors for logging and metrics."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Does Leaven support GraphQL subscriptions?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes, Leaven supports real-time GraphQL subscriptions through the @leaven-graphql/ws package. It implements the graphql-ws protocol for WebSocket connections, includes a built-in PubSub system, and supports subscription filtering and connection management."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What makes Leaven faster than other GraphQL libraries?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Leaven is optimized for the Bun runtime with native API usage, LRU document caching with TTL support, compiled query execution, efficient memory management, and zero unnecessary dependencies. Benchmarks show significant performance improvements over Node.js-based alternatives."
+        }
+      }
+    ]
+  }
+  </script>
+
+  <!-- Breadcrumb Schema -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {
+        "@type": "ListItem",
+        "position": 1,
+        "name": "Home",
+        "item": "https://leaven.dev/"
+      },
+      {
+        "@type": "ListItem",
+        "position": 2,
+        "name": "Documentation",
+        "item": "https://leaven.dev/quick-start"
+      }
+    ]
+  }
+  </script>
+</head>
+<body class="bg-zinc-950 text-zinc-100 antialiased">
+  <app-root></app-root>
+
+  <!-- Noscript fallback for SEO -->
+  <noscript>
+    <div style="padding: 2rem; text-align: center; font-family: system-ui, sans-serif;">
+      <h1>Leaven - High-Performance GraphQL Library for Bun</h1>
+      <p>Leaven is a blazing-fast GraphQL library built specifically for the Bun runtime.</p>
+      <h2>Key Features</h2>
+      <ul style="text-align: left; max-width: 600px; margin: 0 auto;">
+        <li>🚀 High-performance execution optimized for Bun</li>
+        <li>📦 Modular architecture with scoped @leaven-graphql/* packages</li>
+        <li>🔄 Real-time subscriptions via WebSocket</li>
+        <li>🛡️ Type-safe with full TypeScript support</li>
+        <li>🔌 Plugin system for extensibility</li>
+        <li>🏗️ NestJS integration out of the box</li>
+      </ul>
+      <p>Please enable JavaScript to use the full documentation.</p>
+    </div>
+  </noscript>
+</body>
+</html>
