@@ -190,6 +190,117 @@ describe('DocumentCache', () => {
     });
   });
 
+  describe('validation caching', () => {
+    test('should store and retrieve document with validation', () => {
+      const query = '{ hello }';
+      const document = parse(query);
+      const validation = { valid: true, errors: [] as const };
+
+      cache.setWithValidation(query, document, validation);
+      const retrieved = cache.getWithValidation(query);
+
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.document.definitions.length).toBe(document.definitions.length);
+      expect(retrieved?.validation?.valid).toBe(true);
+      expect(retrieved?.validation?.errors).toHaveLength(0);
+    });
+
+    test('should return null for non-existent query with getWithValidation', () => {
+      const result = cache.getWithValidation('{ nonexistent }');
+      expect(result).toBeNull();
+    });
+
+    test('should set validation on existing cached document', () => {
+      const query = '{ hello }';
+      const document = parse(query);
+
+      // First, cache document without validation
+      cache.set(query, document);
+
+      // Then add validation
+      const validation = { valid: true, errors: [] as const };
+      cache.setValidation(query, validation);
+
+      // Retrieve with validation
+      const retrieved = cache.getWithValidation(query);
+      expect(retrieved?.validation?.valid).toBe(true);
+    });
+
+    test('should handle invalid validation result', () => {
+      const query = '{ hello }';
+      const document = parse(query);
+      const mockError = { message: 'Invalid field' } as unknown;
+      const validation = { valid: false, errors: [mockError] as const };
+
+      cache.setWithValidation(query, document, validation);
+      const retrieved = cache.getWithValidation(query);
+
+      expect(retrieved?.validation?.valid).toBe(false);
+      expect(retrieved?.validation?.errors).toHaveLength(1);
+    });
+
+    test('setValidation should do nothing for non-cached query', () => {
+      const validation = { valid: true, errors: [] as const };
+      // Should not throw
+      cache.setValidation('{ nonexistent }', validation);
+    });
+
+    test('getWithValidation should update LRU tracking', () => {
+      const query = '{ hello }';
+      cache.set(query, parse(query));
+
+      // Get multiple times
+      cache.getWithValidation(query);
+      cache.getWithValidation(query);
+
+      const stats = cache.getStats();
+      expect(stats.totalHits).toBeGreaterThan(0);
+    });
+
+    test('getWithValidation should return null for expired entry', async () => {
+      const ttlCache = new DocumentCache({ ttl: 50 });
+      const query = '{ hello }';
+      const validation = { valid: true, errors: [] as const };
+
+      ttlCache.setWithValidation(query, parse(query), validation);
+      expect(ttlCache.getWithValidation(query)).not.toBeNull();
+
+      // Wait for TTL to expire
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      expect(ttlCache.getWithValidation(query)).toBeNull();
+    });
+  });
+
+  describe('direct key optimization', () => {
+    test('should use direct key for small queries', () => {
+      // Small query should use direct key (no hashing)
+      const smallQuery = '{ hello }';
+      cache.set(smallQuery, parse(smallQuery));
+      expect(cache.has(smallQuery)).toBe(true);
+    });
+
+    test('should hash large queries', () => {
+      // Large query should be hashed
+      const largeQuery = `{
+        ${'user'.repeat(100)} {
+          id
+          name
+          email
+        }
+      }`;
+      cache.set(largeQuery, parse(largeQuery));
+      expect(cache.has(largeQuery)).toBe(true);
+    });
+
+    test('should respect custom directKeyMaxLength', () => {
+      const customCache = new DocumentCache({ directKeyMaxLength: 5 });
+      const query = '{ hello }'; // Longer than 5 chars
+      customCache.set(query, parse(query));
+      expect(customCache.has(query)).toBe(true);
+    });
+  });
+
   describe('createDocumentCache', () => {
     test('should create a DocumentCache instance', () => {
       const cache = createDocumentCache();

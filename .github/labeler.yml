@@ -1,0 +1,60 @@
+# Package labels
+'pkg: core':
+  - changed-files:
+      - any-glob-to-any-file: packages/core/**
+
+'pkg: http':
+  - changed-files:
+      - any-glob-to-any-file: packages/http/**
+
+'pkg: ws':
+  - changed-files:
+      - any-glob-to-any-file: packages/ws/**
+
+'pkg: context':
+  - changed-files:
+      - any-glob-to-any-file: packages/context/**
+
+'pkg: schema':
+  - changed-files:
+      - any-glob-to-any-file: packages/schema/**
+
+'pkg: errors':
+  - changed-files:
+      - any-glob-to-any-file: packages/errors/**
+
+'pkg: plugins':
+  - changed-files:
+      - any-glob-to-any-file: packages/plugins/**
+
+'pkg: playground':
+  - changed-files:
+      - any-glob-to-any-file: packages/playground/**
+
+'pkg: nestjs':
+  - changed-files:
+      - any-glob-to-any-file: packages/nestjs/**
+
+# Type labels
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - docs/**
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file: '**/*.test.ts'
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - '*.config.*'
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - package.json
+          - pnpm-lock.yaml
+          - '**/package.json'

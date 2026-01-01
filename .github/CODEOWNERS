@@ -1,0 +1,21 @@
+# Default owners for everything in the repo
+* @pegasusheavy/leaven-maintainers
+
+# Core packages
+/packages/core/ @pegasusheavy/leaven-core
+/packages/http/ @pegasusheavy/leaven-core
+/packages/ws/ @pegasusheavy/leaven-core
+
+# Integration packages
+/packages/nestjs/ @pegasusheavy/leaven-integrations
+
+# Documentation
+/docs/ @pegasusheavy/leaven-docs
+*.md @pegasusheavy/leaven-docs
+
+# CI/CD
+/.github/ @pegasusheavy/leaven-maintainers
+
+# Security-sensitive files
+/SECURITY.md @pegasusheavy/leaven-maintainers
+/.github/workflows/release.yml @pegasusheavy/leaven-maintainers

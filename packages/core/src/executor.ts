@@ -13,8 +13,8 @@ import {
   type ExecutionResult as GraphQLExecutionResult,
 } from 'graphql';
 
-import { DocumentCache, type DocumentCacheConfig } from './cache';
-import { parseDocument, validateDocument, type ParseOptions } from './parser';
+import { DocumentCache, type DocumentCacheConfig, type CachedValidation, type IDocumentCache, resolveValue } from './cache';
+import { parseDocument, validateDocument, type ParseOptions, type ValidationResult } from './parser';
 import { CompiledQuery, compileQuery, type CompilerOptions } from './compiler';
 import type {
   Variables,
@@ -23,7 +23,6 @@ import type {
   SubscriptionIterator,
   ExecutionHooks,
   ExecutionMetrics,
-  ExecutionTiming,
 } from './types';
 
 /**
@@ -34,8 +33,14 @@ export interface ExecutorConfig {
   schema: GraphQLSchema;
   /** Root value for resolvers */
   rootValue?: unknown;
-  /** Document cache configuration */
-  cache?: DocumentCacheConfig | boolean;
+  /**
+   * Document cache configuration
+   * - `true`: Use default in-memory cache
+   * - `false`: Disable caching
+   * - `DocumentCacheConfig`: Configure in-memory cache
+   * - `IDocumentCache`: Use a custom cache implementation (e.g., Redis)
+   */
+  cache?: DocumentCacheConfig | boolean | IDocumentCache;
   /** Parser options */
   parseOptions?: ParseOptions;
   /** Compiler options (enables query compilation) */
@@ -87,7 +92,7 @@ export interface ExecutionResult<TData = Record<string, unknown>> {
 export class LeavenExecutor {
   private readonly schema: GraphQLSchema;
   private readonly rootValue: unknown;
-  private readonly cache: DocumentCache | null;
+  private readonly cache: IDocumentCache | null;
   private readonly parseOptions: ParseOptions;
   private readonly compilerOptions?: CompilerOptions;
   private readonly introspection: boolean;
@@ -115,32 +120,56 @@ export class LeavenExecutor {
       this.cache = null;
     } else if (config.cache === true || config.cache === undefined) {
       this.cache = new DocumentCache();
+    } else if (this.isCustomCache(config.cache)) {
+      // Custom cache implementation (e.g., Redis)
+      this.cache = config.cache;
     } else {
+      // DocumentCacheConfig
       this.cache = new DocumentCache(config.cache);
     }
   }
 
   /**
+   * Check if a value is a custom cache implementation
+   */
+  private isCustomCache(cache: unknown): cache is IDocumentCache {
+    return (
+      typeof cache === 'object' &&
+      cache !== null &&
+      'get' in cache &&
+      'set' in cache &&
+      'getWithValidation' in cache
+    );
+  }
+
+  /**
    * Generate a cache key for a query
+   * Uses fast Bun.hash instead of MD5
    */
   private getCacheKey(query: string, operationName?: string): string {
-    const hasher = new Bun.CryptoHasher('md5');
-    hasher.update(query);
-    if (operationName) {
-      hasher.update(operationName);
-    }
-    return hasher.digest('hex');
+    const input = operationName ? `${query}:${operationName}` : query;
+    return Bun.hash(input).toString(36);
   }
 
   /**
    * Parse a GraphQL query with caching
+   * Returns cached document and validation if available
+   * Supports both sync and async cache implementations
    */
-  private parseQuery(query: string): { document: DocumentNode; cached: boolean } {
+  private async parseQuery(query: string): Promise<{
+    document: DocumentNode;
+    cached: boolean;
+    cachedValidation?: CachedValidation;
+  }> {
     // Check cache first
     if (this.cache) {
-      const cached = this.cache.get(query);
+      const cached = await resolveValue(this.cache.getWithValidation(query));
       if (cached) {
-        return { document: cached, cached: true };
+        return {
+          document: cached.document,
+          cached: true,
+          cachedValidation: cached.validation,
+        };
       }
     }
 
@@ -150,9 +179,15 @@ export class LeavenExecutor {
       maxDepth: this.maxDepth,
     });
 
-    // Cache the result
+    // Cache the result (fire and forget for async caches)
     if (this.cache) {
-      this.cache.set(query, document);
+      const setResult = this.cache.set(query, document);
+      // Don't await - allow execution to continue while caching
+      if (setResult instanceof Promise) {
+        setResult.catch(() => {
+          // Silently ignore cache errors
+        });
+      }
     }
 
     return { document, cached: false };
@@ -200,27 +235,62 @@ export class LeavenExecutor {
     request: GraphQLRequest,
     context?: TContext
   ): Promise<ExecutionResult<TData>> {
-    const startTime = performance.now();
-    const timing: Partial<ExecutionTiming> = {};
+    const startTime = this.metricsEnabled ? performance.now() : 0;
+    let parseTime = 0;
+    let validationTime = 0;
 
     try {
-      // Parse
-      const parseStart = performance.now();
-      await this.hooks?.onParse?.(request.query);
+      // Parse (with cached validation if available)
+      const parseStart = this.metricsEnabled ? performance.now() : 0;
 
-      const { document, cached: documentCached } = this.parseQuery(request.query);
+      // Only call hooks if they exist
+      if (this.hooks?.onParse) {
+        await this.hooks.onParse(request.query);
+      }
 
-      timing.parseTime = performance.now() - parseStart;
-      await this.hooks?.onParsed?.(document);
+      const { document, cached: documentCached, cachedValidation } = await this.parseQuery(request.query);
 
-      // Validate
-      const validateStart = performance.now();
-      await this.hooks?.onValidate?.(document);
+      if (this.metricsEnabled) {
+        parseTime = performance.now() - parseStart;
+      }
 
-      const validation = validateDocument(this.schema, document);
+      if (this.hooks?.onParsed) {
+        await this.hooks.onParsed(document);
+      }
 
-      timing.validationTime = performance.now() - validateStart;
-      await this.hooks?.onValidated?.(validation);
+      // Validate (skip if we have cached validation)
+      const validateStart = this.metricsEnabled ? performance.now() : 0;
+      let validation: ValidationResult;
+      let validationCached = false;
+
+      if (cachedValidation) {
+        // Use cached validation result
+        validation = cachedValidation;
+        validationCached = true;
+      } else {
+        if (this.hooks?.onValidate) {
+          await this.hooks.onValidate(document);
+        }
+        validation = validateDocument(this.schema, document);
+
+        // Cache validation result (fire and forget for async caches)
+        if (this.cache) {
+          const setResult = this.cache.setValidation(request.query, validation);
+          if (setResult instanceof Promise) {
+            setResult.catch(() => {
+              // Silently ignore cache errors
+            });
+          }
+        }
+      }
+
+      if (this.metricsEnabled) {
+        validationTime = performance.now() - validateStart;
+      }
+
+      if (this.hooks?.onValidated) {
+        await this.hooks.onValidated(validation);
+      }
 
       if (!validation.valid) {
         return {
@@ -229,10 +299,15 @@ export class LeavenExecutor {
           },
           metrics: this.metricsEnabled
             ? {
-                timing: { ...timing, totalTime: performance.now() - startTime },
+                timing: {
+                  parseTime,
+                  validationTime,
+                  totalTime: performance.now() - startTime,
+                },
                 documentCached,
                 queryCached: false,
                 resolverCount: 0,
+                validationCached,
               }
             : undefined,
         };
@@ -258,7 +333,11 @@ export class LeavenExecutor {
             },
             metrics: this.metricsEnabled
               ? {
-                  timing: { ...timing, totalTime: performance.now() - startTime },
+                  timing: {
+                    parseTime,
+                    validationTime,
+                    totalTime: performance.now() - startTime,
+                  },
                   documentCached,
                   queryCached,
                   resolverCount: 0,
@@ -270,8 +349,11 @@ export class LeavenExecutor {
       }
 
       // Execute
-      const executeStart = performance.now();
-      await this.hooks?.onExecute?.(context as TContext, document);
+      const executeStart = this.metricsEnabled ? performance.now() : 0;
+
+      if (this.hooks?.onExecute) {
+        await this.hooks.onExecute(context as TContext, document);
+      }
 
       const result = await execute({
         schema: this.schema,
@@ -282,7 +364,7 @@ export class LeavenExecutor {
         operationName: request.operationName,
       });
 
-      timing.executionTime = performance.now() - executeStart;
+      const executionTime = this.metricsEnabled ? performance.now() - executeStart : 0;
 
       const response: GraphQLResponse<TData> = {
         data: result.data as TData | undefined,
@@ -290,21 +372,31 @@ export class LeavenExecutor {
         extensions: request.extensions,
       };
 
-      await this.hooks?.onExecuted?.(response as GraphQLResponse);
+      if (this.hooks?.onExecuted) {
+        await this.hooks.onExecuted(response as GraphQLResponse);
+      }
 
       return {
         response,
         metrics: this.metricsEnabled
           ? {
-              timing: { ...timing, totalTime: performance.now() - startTime },
+              timing: {
+                parseTime,
+                validationTime,
+                executionTime,
+                totalTime: performance.now() - startTime,
+              },
               documentCached,
+              validationCached,
               queryCached,
               resolverCount: 0, // TODO: Track resolver invocations
             }
           : undefined,
       };
     } catch (error) {
-      await this.hooks?.onError?.(error as Error);
+      if (this.hooks?.onError) {
+        await this.hooks.onError(error as Error);
+      }
 
       return {
         response: {
@@ -317,7 +409,11 @@ export class LeavenExecutor {
         },
         metrics: this.metricsEnabled
           ? {
-              timing: { ...timing, totalTime: performance.now() - startTime },
+              timing: {
+                parseTime,
+                validationTime,
+                totalTime: performance.now() - startTime,
+              },
               documentCached: false,
               queryCached: false,
               resolverCount: 0,
@@ -334,7 +430,7 @@ export class LeavenExecutor {
     request: GraphQLRequest,
     context?: TContext
   ): Promise<SubscriptionIterator<TData> | GraphQLResponse<TData>> {
-    const { document } = this.parseQuery(request.query);
+    const { document } = await this.parseQuery(request.query);
 
     // Validate
     const validation = validateDocument(this.schema, document);
@@ -397,10 +493,15 @@ export class LeavenExecutor {
 
   /**
    * Get cache statistics
+   * Returns a promise for async cache implementations (e.g., Redis)
    */
-  public getCacheStats(): { document: ReturnType<DocumentCache['getStats']> | null; compiled: { size: number } } {
+  public async getCacheStats(): Promise<{
+    document: Awaited<ReturnType<IDocumentCache['getStats']>> | null;
+    compiled: { size: number };
+  }> {
+    const documentStats = this.cache ? await resolveValue(this.cache.getStats()) : null;
     return {
-      document: this.cache?.getStats() ?? null,
+      document: documentStats,
       compiled: {
         size: this.compiledQueries.size,
       },
@@ -409,9 +510,12 @@ export class LeavenExecutor {
 
   /**
    * Clear all caches
+   * Returns a promise for async cache implementations (e.g., Redis)
    */
-  public clearCaches(): void {
-    this.cache?.clear();
+  public async clearCaches(): Promise<void> {
+    if (this.cache) {
+      await resolveValue(this.cache.clear());
+    }
     this.compiledQueries.clear();
   }
 

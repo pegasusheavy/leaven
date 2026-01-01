@@ -156,6 +156,8 @@ export interface ExecutionMetrics {
   timing: ExecutionTiming;
   /** Whether the document was cached */
   documentCached: boolean;
+  /** Whether validation was cached */
+  validationCached?: boolean;
   /** Whether the compiled query was cached */
   queryCached: boolean;
   /** Number of resolvers invoked */

@@ -256,7 +256,7 @@ describe('LeavenExecutor', () => {
     test('should return cache statistics', async () => {
       await executor.execute({ query: '{ hello }' });
 
-      const stats = executor.getCacheStats();
+      const stats = await executor.getCacheStats();
 
       expect(stats.document).toBeDefined();
       expect(stats.compiled).toBeDefined();
@@ -266,9 +266,9 @@ describe('LeavenExecutor', () => {
   describe('clearCaches', () => {
     test('should clear all caches', async () => {
       await executor.execute({ query: '{ hello }' });
-      executor.clearCaches();
+      await executor.clearCaches();
 
-      const stats = executor.getCacheStats();
+      const stats = await executor.getCacheStats();
       expect(stats.document?.size).toBe(0);
       expect(stats.compiled.size).toBe(0);
     });

@@ -46,7 +46,7 @@ console.log(result.response.data);
 
 ### Document Caching
 
-Cache parsed documents and compiled queries for improved performance:
+Cache parsed documents and validation results for improved performance:
 
 ```typescript
 const executor = new LeavenExecutor({
@@ -58,13 +58,41 @@ const executor = new LeavenExecutor({
 });
 
 // Check cache statistics
-const stats = executor.getCacheStats();
+const stats = await executor.getCacheStats();
 console.log(stats);
 // {
-//   document: { size: 42, hits: 156, misses: 12 },
-//   compiled: { size: 38, hits: 145, misses: 15 }
+//   document: { size: 42, hits: 156, hitRate: 0.93 },
+//   compiled: { size: 38 }
 // }
 ```
+
+### Redis Cache (Distributed)
+
+For distributed deployments, use Redis as a cache backend:
+
+```typescript
+import { LeavenExecutor, createRedisCache } from '@leaven-graphql/core';
+import Redis from 'ioredis';
+
+const redis = new Redis();
+
+const executor = new LeavenExecutor({
+  schema,
+  cache: createRedisCache({
+    client: redis,
+    prefix: 'gql:doc:',     // Redis key prefix
+    ttl: 3600,              // TTL in seconds
+    compress: true,         // Enable gzip compression
+    compressionThreshold: 1024, // Compress documents > 1KB
+  }),
+});
+```
+
+The Redis cache supports:
+- **Distributed caching** across multiple server instances
+- **Automatic TTL** handled by Redis
+- **Gzip compression** for large documents
+- **Validation caching** for faster repeated queries
 
 ### Lifecycle Hooks
 
@@ -146,11 +174,13 @@ const result = await executor.execute<QueryData>(
 |--------|------|---------|-------------|
 | `schema` | `GraphQLSchema` | Required | Your GraphQL schema |
 | `rootValue` | `unknown` | `undefined` | Root resolver value |
-| `cache` | `DocumentCacheConfig \| boolean` | `false` | Document cache configuration |
-| `compilerOptions` | `CompilerOptions` | `{}` | Query compiler options |
+| `cache` | `DocumentCacheConfig \| boolean \| IDocumentCache` | `true` | Document cache configuration or custom cache |
+| `compilerOptions` | `CompilerOptions` | `undefined` | Query compiler options |
+| `maxDepth` | `number` | `undefined` | Maximum query depth |
 | `maxComplexity` | `number` | `undefined` | Maximum query complexity |
-| `hooks` | `ExecutionHooks` | `{}` | Lifecycle hooks |
+| `hooks` | `ExecutionHooks` | `undefined` | Lifecycle hooks |
 | `metrics` | `boolean` | `false` | Enable execution metrics |
+| `introspection` | `boolean` | `true` | Enable introspection queries |
 
 ## API Reference
 

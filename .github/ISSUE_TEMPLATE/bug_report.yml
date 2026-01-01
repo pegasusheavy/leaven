@@ -1,0 +1,126 @@
+name: 🐛 Bug Report
+description: Report a bug or unexpected behavior
+labels: ['bug', 'triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the form below.
+
+  - type: checkboxes
+    id: existing-issue
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search existing issues before creating a new one.
+      options:
+        - label: I have searched the existing issues
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of the bug.
+      placeholder: Describe the bug...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior.
+      placeholder: |
+        1. Create executor with...
+        2. Execute query...
+        3. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: Describe expected behavior...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Describe actual behavior...
+    validations:
+      required: true
+
+  - type: textarea
+    id: code
+    attributes:
+      label: Minimal Reproduction
+      description: Please provide a minimal code example that reproduces the issue.
+      render: typescript
+      placeholder: |
+        import { createExecutor } from '@leaven-graphql/core';
+
+        const executor = createExecutor({ schema });
+        const result = await executor.execute({ query: '{ hello }' });
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: Affected Package(s)
+      description: Which package(s) are affected?
+      multiple: true
+      options:
+        - '@leaven-graphql/core'
+        - '@leaven-graphql/http'
+        - '@leaven-graphql/ws'
+        - '@leaven-graphql/context'
+        - '@leaven-graphql/schema'
+        - '@leaven-graphql/errors'
+        - '@leaven-graphql/plugins'
+        - '@leaven-graphql/playground'
+        - '@leaven-graphql/nestjs'
+        - 'leaven-graphql'
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Package Version
+      description: What version of the package are you using?
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: bun-version
+    attributes:
+      label: Bun Version
+      description: What version of Bun are you using? (run `bun --version`)
+      placeholder: 1.3.5
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS
+        - Linux
+        - Windows
+        - Windows (WSL)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here.
+      placeholder: Any additional information...

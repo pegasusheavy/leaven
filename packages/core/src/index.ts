@@ -9,7 +9,11 @@ export { LeavenExecutor, createExecutor } from './executor';
 export type { ExecutorConfig, ExecutionResult, ExecutionContext } from './executor';
 
 export { DocumentCache, createDocumentCache } from './cache';
-export type { DocumentCacheConfig, CacheEntry } from './cache';
+export type { DocumentCacheConfig, CacheEntry, CachedValidation, IDocumentCache, CacheStats } from './cache';
+export { isPromise, resolveValue } from './cache';
+
+export { RedisDocumentCache, createRedisCache } from './cache-redis';
+export type { RedisCacheConfig, RedisClient } from './cache-redis';
 
 export { parseDocument, validateDocument } from './parser';
 export type { ParseOptions, ValidationResult } from './parser';

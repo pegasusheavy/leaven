@@ -6,6 +6,11 @@
  */
 
 import type { DocumentNode } from 'graphql';
+import type { IDocumentCache, CachedValidation, CacheStats } from './cache-interface';
+
+// Re-export interface types
+export type { IDocumentCache, CachedValidation, CacheStats } from './cache-interface';
+export { isPromise, resolveValue } from './cache-interface';
 
 /**
  * Configuration for the document cache
@@ -17,6 +22,8 @@ export interface DocumentCacheConfig {
   ttl?: number;
   /** Enable LRU eviction (default: true) */
   lru?: boolean;
+  /** Maximum query length to use as direct key (avoids hashing, default: 256) */
+  directKeyMaxLength?: number;
 }
 
 /**
@@ -25,6 +32,8 @@ export interface DocumentCacheConfig {
 export interface CacheEntry {
   /** The parsed document */
   document: DocumentNode;
+  /** Cached validation result (if validated) */
+  validation?: CachedValidation;
   /** When this entry was created */
   createdAt: number;
   /** Last access time for LRU */
@@ -34,29 +43,35 @@ export interface CacheEntry {
 }
 
 /**
- * Document cache for storing parsed GraphQL documents
+ * In-memory document cache for storing parsed GraphQL documents
+ * Implements the IDocumentCache interface for interchangeability with Redis
  */
-export class DocumentCache {
+export class DocumentCache implements IDocumentCache {
   private readonly cache: Map<string, CacheEntry>;
   private readonly maxSize: number;
   private readonly ttl: number;
   private readonly lru: boolean;
+  private readonly directKeyMaxLength: number;
 
   constructor(config: DocumentCacheConfig = {}) {
     this.cache = new Map();
     this.maxSize = config.maxSize ?? 1000;
     this.ttl = config.ttl ?? 0;
     this.lru = config.lru ?? true;
+    this.directKeyMaxLength = config.directKeyMaxLength ?? 256;
   }
 
   /**
    * Generate a cache key for a query string
+   * Uses direct string for small queries, fast Bun.hash for larger ones
    */
   private generateKey(query: string): string {
-    // Use Bun's fast hash function
-    const hasher = new Bun.CryptoHasher('md5');
-    hasher.update(query);
-    return hasher.digest('hex');
+    // For small queries, use the query string directly (avoids hashing overhead)
+    if (query.length <= this.directKeyMaxLength) {
+      return query;
+    }
+    // Use Bun's fast hash function for larger queries
+    return `h:${Bun.hash(query).toString(36)}`;
   }
 
   /**
@@ -132,6 +147,62 @@ export class DocumentCache {
   }
 
   /**
+   * Get a document with its validation result from the cache
+   */
+  public getWithValidation(query: string): { document: DocumentNode; validation?: CachedValidation } | null {
+    const key = this.generateKey(query);
+    const entry = this.cache.get(key);
+
+    if (!entry) {
+      return null;
+    }
+
+    if (this.isExpired(entry)) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    // Update LRU tracking
+    entry.lastAccess = Date.now();
+    entry.hits++;
+
+    return { document: entry.document, validation: entry.validation };
+  }
+
+  /**
+   * Set validation result for a cached document
+   */
+  public setValidation(query: string, validation: CachedValidation): void {
+    const key = this.generateKey(query);
+    const entry = this.cache.get(key);
+
+    if (entry) {
+      entry.validation = validation;
+    }
+  }
+
+  /**
+   * Set document with validation result in a single operation
+   */
+  public setWithValidation(query: string, document: DocumentNode, validation: CachedValidation): void {
+    const key = this.generateKey(query);
+
+    // Evict if at capacity
+    if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
+      this.evictLRU();
+    }
+
+    const now = Date.now();
+    this.cache.set(key, {
+      document,
+      validation,
+      createdAt: now,
+      lastAccess: now,
+      hits: 0,
+    });
+  }
+
+  /**
    * Check if a query is in the cache
    */
   public has(query: string): boolean {
@@ -172,13 +243,7 @@ export class DocumentCache {
   /**
    * Get cache statistics
    */
-  public getStats(): {
-    size: number;
-    maxSize: number;
-    hitRate: number;
-    totalHits: number;
-    entries: number;
-  } {
+  public getStats(): CacheStats {
     let totalHits = 0;
     for (const entry of this.cache.values()) {
       totalHits += entry.hits;

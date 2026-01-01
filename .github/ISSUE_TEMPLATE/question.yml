@@ -1,0 +1,46 @@
+name: ❓ Question
+description: Ask a question about using Leaven
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? We're here to help!
+
+        Before asking, please check:
+        - [Documentation](https://pegasusheavy.github.io/leaven/)
+        - [Existing issues](https://github.com/pegasusheavy/leaven/issues)
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+      placeholder: How do I...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Provide any relevant context or code examples.
+      render: typescript
+
+  - type: dropdown
+    id: package
+    attributes:
+      label: Related Package(s)
+      description: Which package(s) is this question about?
+      multiple: true
+      options:
+        - "@leaven-graphql/core"
+        - "@leaven-graphql/http"
+        - "@leaven-graphql/ws"
+        - "@leaven-graphql/context"
+        - "@leaven-graphql/schema"
+        - "@leaven-graphql/plugins"
+        - "@leaven-graphql/errors"
+        - "@leaven-graphql/playground"
+        - "@leaven-graphql/nestjs"
+        - "General"
