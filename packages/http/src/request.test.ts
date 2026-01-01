@@ -98,6 +98,59 @@ describe('parseBody', () => {
 
     expect(result.query).toBe('{ hello }');
   });
+
+  test('should parse application/x-www-form-urlencoded body', async () => {
+    const request = new Request('http://localhost/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'query=%7B%20hello%20%7D&operationName=Test&variables=%7B%22id%22%3A%221%22%7D',
+    });
+
+    const result = await parseBody(request);
+
+    expect(result.query).toBe('{ hello }');
+    expect(result.operationName).toBe('Test');
+    expect(result.variables).toEqual({ id: '1' });
+  });
+
+  test('should parse multipart body without operations field', async () => {
+    const formData = new FormData();
+    formData.append('query', '{ users { name } }');
+    formData.append('operationName', 'GetUsers');
+
+    const request = new Request('http://localhost/graphql', {
+      method: 'POST',
+      body: formData,
+    });
+
+    const result = await parseBody(request);
+
+    expect(result.query).toBe('{ users { name } }');
+    expect(result.operationName).toBe('GetUsers');
+  });
+
+  test('should throw for unsupported content type with invalid JSON fallback', async () => {
+    const request = new Request('http://localhost/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: 'not supported',
+    });
+
+    // Falls back to JSON parsing which fails
+    await expect(parseBody(request)).rejects.toThrow(/Invalid JSON/);
+  });
+
+  test('should fallback to JSON for unknown content type with valid JSON', async () => {
+    const request = new Request('http://localhost/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/unknown' },
+      body: JSON.stringify({ query: '{ hello }' }),
+    });
+
+    const result = await parseBody(request);
+
+    expect(result.query).toBe('{ hello }');
+  });
 });
 
 describe('parseQuery', () => {

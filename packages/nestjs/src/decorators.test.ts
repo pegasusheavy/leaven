@@ -128,6 +128,29 @@ describe('Decorators', () => {
       const CurrentUser = createContextDecorator<{ id: string }>('user');
       expect(typeof CurrentUser).toBe('function');
     });
+
+    test('should return a parameter decorator', () => {
+      const CurrentUser = createContextDecorator<{ id: string }>('user');
+      const decorator = CurrentUser();
+      expect(typeof decorator).toBe('function');
+    });
+  });
+
+  describe('Decorators', () => {
+    test('should compose multiple decorators', () => {
+      const { Decorators } = require('./decorators');
+
+      class TestClass {
+        @Decorators(Complexity(10), Description('A test method'))
+        testMethod() {}
+      }
+
+      const complexityMeta = Reflect.getMetadata(COMPLEXITY_KEY, TestClass.prototype.testMethod);
+      const descMeta = Reflect.getMetadata(DESCRIPTION_KEY, TestClass.prototype.testMethod);
+
+      expect(complexityMeta).toBe(10);
+      expect(descMeta).toBe('A test method');
+    });
   });
 
   describe('metadata keys', () => {

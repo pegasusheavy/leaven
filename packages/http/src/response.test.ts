@@ -91,6 +91,16 @@ describe('corsHeaders', () => {
 
     expect(headers['Access-Control-Expose-Headers']).toBe('X-Custom-Header');
   });
+
+  test('should use custom methods', () => {
+    const request = new Request('http://localhost/graphql');
+
+    const headers = corsHeaders(request, {
+      methods: ['GET', 'POST', 'PUT'],
+    });
+
+    expect(headers['Access-Control-Allow-Methods']).toBe('GET, POST, PUT');
+  });
 });
 
 describe('buildResponse', () => {

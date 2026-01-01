@@ -274,4 +274,88 @@ describe('LeavenDriver', () => {
       expect(driver.getExecutor()).toBeNull();
     });
   });
+
+  describe('handleRequest', () => {
+    beforeEach(async () => {
+      const options: LeavenModuleOptions = { schema };
+      driver = new LeavenDriver(options);
+      await driver.onModuleInit();
+    });
+
+    test('should handle JSON POST request', async () => {
+      const request = new Request('http://localhost/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ hello }' }),
+      });
+      const response = new Response();
+
+      const result = await driver.handleRequest(request, response);
+
+      expect(result.data).toEqual({ hello: 'world' });
+    });
+
+    test('should handle GET request with query params', async () => {
+      const request = new Request(
+        'http://localhost/graphql?query=' + encodeURIComponent('{ hello }')
+      );
+      const response = new Response();
+
+      const result = await driver.handleRequest(request, response);
+
+      expect(result.data).toEqual({ hello: 'world' });
+    });
+
+    test('should handle GET request with variables', async () => {
+      const query = 'query Echo($msg: String) { echo(message: $msg) }';
+      const variables = JSON.stringify({ msg: 'test' });
+      const request = new Request(
+        `http://localhost/graphql?query=${encodeURIComponent(query)}&variables=${encodeURIComponent(variables)}`
+      );
+      const response = new Response();
+
+      const result = await driver.handleRequest(request, response);
+
+      expect(result.data).toEqual({ echo: 'test' });
+    });
+
+    test('should throw error for missing query', async () => {
+      const request = new Request('http://localhost/graphql');
+      const response = new Response();
+
+      await expect(driver.handleRequest(request, response)).rejects.toThrow(
+        'Query is required'
+      );
+    });
+
+    test('should use custom context factory', async () => {
+      const contextDriver = new LeavenDriver({
+        schema: new GraphQLSchema({
+          query: new GraphQLObjectType({
+            name: 'Query',
+            fields: {
+              user: {
+                type: GraphQLString,
+                resolve: (_, __, ctx) => ctx.userId,
+              },
+            },
+          }),
+        }),
+        context: async () => ({ userId: 'user-123' }),
+      });
+      await contextDriver.onModuleInit();
+
+      const request = new Request('http://localhost/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: '{ user }' }),
+      });
+      const response = new Response();
+
+      const result = await contextDriver.handleRequest(request, response);
+
+      expect(result.data).toEqual({ user: 'user-123' });
+      contextDriver.onModuleDestroy();
+    });
+  });
 });

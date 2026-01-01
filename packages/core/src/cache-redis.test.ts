@@ -141,6 +141,24 @@ describe('RedisDocumentCache', () => {
       const result = await cache.getWithValidation('{ nonexistent }');
       expect(result).toBeNull();
     });
+
+    test('should handle validation errors with locations and paths', async () => {
+      const query = '{ testQuery }';
+      const document = parse('{ hello }');
+      const mockError = {
+        message: 'Field not found',
+        locations: [{ line: 1, column: 3 }],
+        path: ['hello'],
+      } as unknown;
+      const validation = { valid: false, errors: [mockError] as const };
+
+      await cache.setWithValidation(query, document, validation);
+      const retrieved = await cache.getWithValidation(query);
+
+      expect(retrieved?.validation?.valid).toBe(false);
+      expect(retrieved?.validation?.errors).toHaveLength(1);
+      expect(retrieved?.validation?.errors[0].message).toBe('Field not found');
+    });
   });
 
   describe('setValidation', () => {

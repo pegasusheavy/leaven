@@ -17,6 +17,8 @@ import {
   AuthGuard,
   RolesGuard,
   PermissionsGuard,
+  ComplexityGuard,
+  DepthGuard,
 } from './guards';
 import { Reflector } from '@nestjs/core';
 import type { ExecutionContext } from '@nestjs/common';
@@ -262,6 +264,90 @@ describe('PermissionsGuard', () => {
     const context = createMockContext(['user:read'], null);
 
     expect(() => guard.canActivate(context)).toThrow('Authentication required');
+  });
+});
+
+describe('ComplexityGuard', () => {
+  function createMockContext(queryComplexity: number | undefined): ExecutionContext {
+    return {
+      getHandler: () => ({ name: 'testHandler' }),
+      getClass: () => ({ name: 'TestClass' }),
+      getArgs: () => [{}, {}, { _queryComplexity: queryComplexity }, {}],
+      getType: () => 'graphql',
+      switchToHttp: () => ({} as unknown),
+      switchToRpc: () => ({} as unknown),
+      switchToWs: () => ({} as unknown),
+      getArgByIndex: () => ({} as unknown),
+    } as unknown as ExecutionContext;
+  }
+
+  test('should allow access when complexity is within limit', () => {
+    const guard = new ComplexityGuard(100);
+    const context = createMockContext(50);
+
+    const result = guard.canActivate(context);
+
+    expect(result).toBe(true);
+  });
+
+  test('should allow access when complexity is undefined', () => {
+    const guard = new ComplexityGuard(100);
+    const context = createMockContext(undefined);
+
+    const result = guard.canActivate(context);
+
+    expect(result).toBe(true);
+  });
+
+  test('should deny access when complexity exceeds limit', () => {
+    const guard = new ComplexityGuard(100);
+    const context = createMockContext(150);
+
+    expect(() => guard.canActivate(context)).toThrow(
+      'Query complexity 150 exceeds maximum allowed 100'
+    );
+  });
+});
+
+describe('DepthGuard', () => {
+  function createMockContext(queryDepth: number | undefined): ExecutionContext {
+    return {
+      getHandler: () => ({ name: 'testHandler' }),
+      getClass: () => ({ name: 'TestClass' }),
+      getArgs: () => [{}, {}, { _queryDepth: queryDepth }, {}],
+      getType: () => 'graphql',
+      switchToHttp: () => ({} as unknown),
+      switchToRpc: () => ({} as unknown),
+      switchToWs: () => ({} as unknown),
+      getArgByIndex: () => ({} as unknown),
+    } as unknown as ExecutionContext;
+  }
+
+  test('should allow access when depth is within limit', () => {
+    const guard = new DepthGuard(10);
+    const context = createMockContext(5);
+
+    const result = guard.canActivate(context);
+
+    expect(result).toBe(true);
+  });
+
+  test('should allow access when depth is undefined', () => {
+    const guard = new DepthGuard(10);
+    const context = createMockContext(undefined);
+
+    const result = guard.canActivate(context);
+
+    expect(result).toBe(true);
+  });
+
+  test('should deny access when depth exceeds limit', () => {
+    const guard = new DepthGuard(10);
+    const context = createMockContext(15);
+
+    expect(() => guard.canActivate(context)).toThrow(
+      'Query depth 15 exceeds maximum allowed 10'
+    );
   });
 });
 

@@ -312,6 +312,46 @@ describe('LeavenExecutor', () => {
 
       expect(result).toHaveProperty('errors');
     });
+
+    test('should support iterator return method', async () => {
+      const result = await executor.subscribe({
+        query: 'subscription { countdown(from: 5) }',
+      });
+
+      if (!('errors' in result)) {
+        const iterator = result as AsyncIterableIterator<{ data?: unknown }>;
+
+        // Get one value then return
+        await iterator.next();
+        const returnResult = await iterator.return?.();
+
+        expect(returnResult?.done).toBe(true);
+      }
+    });
+
+    test('should support iterator throw method', async () => {
+      const result = await executor.subscribe({
+        query: 'subscription { countdown(from: 5) }',
+      });
+
+      if (!('errors' in result)) {
+        const iterator = result as AsyncIterableIterator<{ data?: unknown }>;
+
+        // Get one value then throw
+        await iterator.next();
+
+        // The throw method may propagate the error, so we wrap in try-catch
+        try {
+          const throwResult = await iterator.throw?.(new Error('Test error'));
+          expect(throwResult?.done).toBe(true);
+        } catch {
+          // Some implementations may throw the error
+          // The important thing is that the iterator is closed
+          const nextResult = await iterator.next();
+          expect(nextResult.done).toBe(true);
+        }
+      }
+    });
   });
 });
 

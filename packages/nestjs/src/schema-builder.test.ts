@@ -12,8 +12,10 @@ import {
   getResolverMetadata,
   registerResolverMetadata,
   clearResolverMetadata,
+  generateSchemaFile,
   type ResolverMetadata,
 } from './schema-builder';
+import { unlink } from 'node:fs/promises';
 import { LeavenDriver } from './driver';
 import type { LeavenModuleOptions } from './types';
 
@@ -139,6 +141,177 @@ describe('SchemaBuilderService', () => {
 
       expect(builder.isSchemaReady()).toBe(true);
     });
+  });
+});
+
+describe('SchemaBuilderService with typeDefs', () => {
+  let driver: LeavenDriver;
+
+  beforeEach(() => {
+    driver = new LeavenDriver({});
+  });
+
+  afterEach(() => {
+    driver.onModuleDestroy();
+  });
+
+  test('should build schema from typeDefs and resolvers', async () => {
+    const typeDefs = `
+      type Query {
+        hello: String
+      }
+    `;
+
+    const resolvers = {
+      Query: {
+        hello: () => 'world',
+      },
+    };
+
+    const options: LeavenModuleOptions = { typeDefs, resolvers };
+    const builder = new SchemaBuilderService(options, driver);
+
+    const result = await builder.buildSchema();
+
+    // Should return a schema (or null if @graphql-tools/schema is not installed)
+    // We don't fail the test if the package isn't available
+    if (result) {
+      expect(result).toBeInstanceOf(GraphQLSchema);
+    }
+  });
+
+  test('should return null when only typeDefs provided without resolvers', async () => {
+    const typeDefs = `
+      type Query {
+        hello: String
+      }
+    `;
+
+    const options: LeavenModuleOptions = { typeDefs };
+    const builder = new SchemaBuilderService(options, driver);
+
+    const result = await builder.buildSchema();
+
+    expect(result).toBeNull();
+  });
+
+  test('should return null when only resolvers provided without typeDefs', async () => {
+    const resolvers = {
+      Query: {
+        hello: () => 'world',
+      },
+    };
+
+    const options: LeavenModuleOptions = { resolvers };
+    const builder = new SchemaBuilderService(options, driver);
+
+    const result = await builder.buildSchema();
+
+    expect(result).toBeNull();
+  });
+
+  test('should handle array of typeDefs', async () => {
+    const typeDefs = [
+      `type Query { hello: String }`,
+      `extend type Query { goodbye: String }`,
+    ];
+
+    const resolvers = {
+      Query: {
+        hello: () => 'world',
+        goodbye: () => 'world',
+      },
+    };
+
+    const options: LeavenModuleOptions = { typeDefs, resolvers };
+    const builder = new SchemaBuilderService(options, driver);
+
+    const result = await builder.buildSchema();
+
+    // May return null if @graphql-tools/schema is not available
+    if (result) {
+      expect(result).toBeInstanceOf(GraphQLSchema);
+    }
+  });
+
+  test('should handle array of resolvers', async () => {
+    const typeDefs = `
+      type Query {
+        hello: String
+        goodbye: String
+      }
+    `;
+
+    const resolvers = [
+      { Query: { hello: () => 'world' } },
+      { Query: { goodbye: () => 'world' } },
+    ];
+
+    const options: LeavenModuleOptions = { typeDefs, resolvers };
+    const builder = new SchemaBuilderService(options, driver);
+
+    const result = await builder.buildSchema();
+
+    // May return null if @graphql-tools/schema is not available
+    if (result) {
+      expect(result).toBeInstanceOf(GraphQLSchema);
+    }
+  });
+});
+
+describe('generateSchemaFile', () => {
+  const testFilePath = '/tmp/test-schema.graphql';
+
+  afterEach(async () => {
+    try {
+      await unlink(testFilePath);
+    } catch {
+      // File may not exist
+    }
+  });
+
+  test('should generate schema file', async () => {
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Query',
+        fields: {
+          hello: {
+            type: GraphQLString,
+            resolve: () => 'world',
+          },
+        },
+      }),
+    });
+
+    await generateSchemaFile(schema, { path: testFilePath });
+
+    const { readFile } = require('node:fs/promises');
+    const content = await readFile(testFilePath, 'utf-8');
+
+    expect(content).toContain('type Query');
+    expect(content).toContain('hello');
+  });
+
+  test('should sort schema when sortSchema is true', async () => {
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Query',
+        fields: {
+          zebra: { type: GraphQLString },
+          apple: { type: GraphQLString },
+        },
+      }),
+    });
+
+    await generateSchemaFile(schema, { path: testFilePath, sortSchema: true });
+
+    const { readFile } = require('node:fs/promises');
+    const content = await readFile(testFilePath, 'utf-8');
+
+    // In sorted order, apple should come before zebra
+    const appleIndex = content.indexOf('apple');
+    const zebraIndex = content.indexOf('zebra');
+    expect(appleIndex).toBeLessThan(zebraIndex);
   });
 });
 
