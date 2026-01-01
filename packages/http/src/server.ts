@@ -23,7 +23,7 @@ export interface ServerConfig<TContext = unknown> extends HandlerConfig<TContext
   /** Routes map for multiple endpoints */
   routes?: Record<string, GraphQLHandler | ((request: Request) => Response | Promise<Response>)>;
   /** Called when server starts */
-  onStart?: (server: Server) => void;
+  onStart?: (server: Server<unknown>) => void;
   /** Called when server stops */
   onStop?: () => void;
   /** Called on request error */
@@ -46,7 +46,7 @@ export interface ServerInfo {
  * Leaven GraphQL Server for Bun
  */
 export class LeavenServer {
-  private server: Server | null = null;
+  private server: Server<unknown> | null = null;
   private readonly config: ServerConfig;
   private readonly handler: GraphQLHandler;
   private readonly path: string;
@@ -109,10 +109,13 @@ export class LeavenServer {
       fetch: (request) => this.handleRequest(request),
     });
 
+    const actualPort = this.server.port ?? port;
+    const actualHostname = this.server.hostname ?? hostname;
+
     const info: ServerInfo = {
-      port: this.server.port,
-      hostname: this.server.hostname,
-      url: `http://${hostname === '0.0.0.0' ? 'localhost' : hostname}:${this.server.port}${this.path}`,
+      port: actualPort,
+      hostname: actualHostname,
+      url: `http://${actualHostname === '0.0.0.0' ? 'localhost' : actualHostname}:${actualPort}${this.path}`,
     };
 
     this.config.onStart?.(this.server);
@@ -134,7 +137,7 @@ export class LeavenServer {
   /**
    * Get the underlying Bun server
    */
-  public getServer(): Server | null {
+  public getServer(): Server<unknown> | null {
     return this.server;
   }
 
@@ -151,7 +154,7 @@ export class LeavenServer {
   public reload(): void {
     if (this.server) {
       this.server.reload({
-        fetch: (request) => this.handleRequest(request),
+        fetch: (request: Request) => this.handleRequest(request),
       });
     }
   }

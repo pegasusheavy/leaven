@@ -140,13 +140,16 @@ export function createRequestContext(
     headers[key] = value;
   });
 
-  return new RequestContext(
-    {
-      method: request.method,
-      url: request.url,
-      headers,
-      userAgent: request.headers.get('user-agent') ?? undefined,
-    },
-    config
-  );
+  const userAgent = request.headers.get('user-agent');
+  const requestInfo: RequestInfo = {
+    method: request.method,
+    url: request.url,
+    headers,
+  };
+
+  if (userAgent) {
+    requestInfo.userAgent = userAgent;
+  }
+
+  return new RequestContext(requestInfo, config);
 }

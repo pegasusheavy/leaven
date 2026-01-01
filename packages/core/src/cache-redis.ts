@@ -52,7 +52,7 @@ interface SerializedEntry {
   /** Validation result */
   v?: {
     valid: boolean;
-    errors: Array<{ message: string; locations?: unknown[]; path?: unknown[] }>;
+    errors: Array<{ message: string; locations?: readonly unknown[]; path?: readonly unknown[] }>;
   };
   /** Created timestamp */
   c: number;

@@ -155,7 +155,7 @@ describe('SubscriptionManager WebSocket handling', () => {
   test('should handle mock WebSocket connection', async () => {
     const mockSocket = createMockWebSocket();
 
-    await manager.handleConnection(mockSocket);
+    await manager.handleConnection(mockSocket as unknown as WebSocket);
 
     expect(manager.getConnectionCount()).toBe(1);
   });
@@ -163,7 +163,7 @@ describe('SubscriptionManager WebSocket handling', () => {
   test('should handle mock WebSocket close', async () => {
     const mockSocket = createMockWebSocket();
 
-    await manager.handleConnection(mockSocket);
+    await manager.handleConnection(mockSocket as unknown as WebSocket);
     expect(manager.getConnectionCount()).toBe(1);
 
     // Simulate close
@@ -175,7 +175,7 @@ describe('SubscriptionManager WebSocket handling', () => {
   test('should handle ping message', async () => {
     const mockSocket = createMockWebSocket();
 
-    await manager.handleConnection(mockSocket);
+    await manager.handleConnection(mockSocket as unknown as WebSocket);
 
     // Simulate ping message
     mockSocket.simulateMessage(JSON.stringify({ type: 'ping' }));
@@ -189,7 +189,7 @@ describe('SubscriptionManager WebSocket handling', () => {
   test('should handle connection_init message', async () => {
     const mockSocket = createMockWebSocket();
 
-    await manager.handleConnection(mockSocket);
+    await manager.handleConnection(mockSocket as unknown as WebSocket);
 
     // Simulate connection_init
     mockSocket.simulateMessage(
@@ -205,7 +205,7 @@ describe('SubscriptionManager WebSocket handling', () => {
   test('should handle subscribe message after initialization', async () => {
     const mockSocket = createMockWebSocket();
 
-    await manager.handleConnection(mockSocket);
+    await manager.handleConnection(mockSocket as unknown as WebSocket);
 
     // Initialize connection first
     mockSocket.simulateMessage(
@@ -236,7 +236,7 @@ describe('SubscriptionManager WebSocket handling', () => {
   test('should handle complete message', async () => {
     const mockSocket = createMockWebSocket();
 
-    await manager.handleConnection(mockSocket);
+    await manager.handleConnection(mockSocket as unknown as WebSocket);
 
     // Initialize connection
     mockSocket.simulateMessage(
@@ -257,7 +257,7 @@ describe('SubscriptionManager WebSocket handling', () => {
   test('should close connection for duplicate init', async () => {
     const mockSocket = createMockWebSocket();
 
-    await manager.handleConnection(mockSocket);
+    await manager.handleConnection(mockSocket as unknown as WebSocket);
 
     // First connection_init
     mockSocket.simulateMessage(
@@ -279,7 +279,7 @@ describe('SubscriptionManager WebSocket handling', () => {
   test('should handle pong message (no-op)', async () => {
     const mockSocket = createMockWebSocket();
 
-    await manager.handleConnection(mockSocket);
+    await manager.handleConnection(mockSocket as unknown as WebSocket);
 
     // Initialize connection
     mockSocket.simulateMessage(
@@ -304,7 +304,7 @@ describe('SubscriptionManager WebSocket handling', () => {
   test('should handle WebSocket error', async () => {
     const mockSocket = createMockWebSocket();
 
-    await manager.handleConnection(mockSocket);
+    await manager.handleConnection(mockSocket as unknown as WebSocket);
     expect(manager.getConnectionCount()).toBe(1);
 
     // Simulate error - the error handler logs but doesn't close

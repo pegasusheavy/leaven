@@ -36,7 +36,7 @@ export interface StoredContext<TContext extends BaseContext> {
 export class ContextStore<TContext extends BaseContext> {
   private readonly storage: AsyncLocalStorage<TContext>;
   private readonly activeContexts: Map<string, StoredContext<TContext>>;
-  private cleanupTimer?: ReturnType<typeof setInterval>;
+  private cleanupTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(config: ContextStoreConfig = {}) {
     this.storage = new AsyncLocalStorage<TContext>();

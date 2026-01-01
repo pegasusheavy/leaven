@@ -11,6 +11,7 @@ import {
   Global,
   Provider,
   type Type,
+  type InjectionToken,
 } from '@nestjs/common';
 import type {
   LeavenModuleOptions,
@@ -149,7 +150,7 @@ export class LeavenModule {
       return {
         provide: LEAVEN_MODULE_OPTIONS,
         useFactory: options.useFactory,
-        inject: options.inject ?? [],
+        inject: (options.inject ?? []) as InjectionToken[],
       };
     }
 

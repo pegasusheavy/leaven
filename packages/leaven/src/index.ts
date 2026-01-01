@@ -6,8 +6,19 @@
  */
 
 // Re-export all packages for convenience
+// Core exports everything
 export * from '@leaven-graphql/core';
-export * from '@leaven-graphql/schema';
+// Schema may have duplicates with core, exclude them
+export {
+  SchemaBuilder,
+  createSchemaBuilder,
+  mergeSchemas,
+  mergeSchemasFromStrings,
+  createResolvers,
+  mergeResolvers,
+  loadSchemaFromFile,
+  loadSchemaFromDirectory,
+} from '@leaven-graphql/schema';
 export * from '@leaven-graphql/http';
 export * from '@leaven-graphql/ws';
 export * from '@leaven-graphql/context';
@@ -30,16 +41,7 @@ export {
   createOperationRegistry,
 } from '@leaven-graphql/core';
 
-export {
-  // Schema
-  SchemaBuilder,
-  createSchemaBuilder,
-  mergeSchemas,
-  createResolvers,
-  mergeResolvers,
-  loadSchemaFromFile,
-  loadSchemaFromDirectory,
-} from '@leaven-graphql/schema';
+// Schema exports are already included above
 
 export {
   // HTTP

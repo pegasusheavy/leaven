@@ -140,7 +140,7 @@ export class LeavenDriver implements OnModuleInit, OnModuleDestroy {
 
       return {
         data: response.data as Record<string, unknown> | null | undefined,
-        errors: formattedErrors,
+        errors: formattedErrors as unknown as readonly GraphQLFormattedError[] | undefined,
         extensions,
       };
     } catch (error) {

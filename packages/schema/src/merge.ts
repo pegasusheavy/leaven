@@ -11,6 +11,7 @@ import {
   printSchema,
   parse,
   buildASTSchema,
+  Kind,
   type DocumentNode,
 } from 'graphql';
 
@@ -136,7 +137,7 @@ function mergeTypeDefinitions(
 
   // Create a merged document
   const mergedDocument: DocumentNode = {
-    kind: 'Document' as const,
+    kind: Kind.DOCUMENT,
     definitions: mergedDefinitions as DocumentNode['definitions'],
   };
 

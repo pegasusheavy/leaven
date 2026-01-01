@@ -119,8 +119,13 @@ export function maskError(
     };
   }
 
-  // Build the formatted error
-  const formatted: GraphQLFormattedError = {
+  // Build the formatted error using a mutable intermediate object
+  const formatted: {
+    message: string;
+    locations?: typeof error.locations;
+    path?: typeof error.path;
+    extensions?: Record<string, unknown>;
+  } = {
     message: error.message,
   };
 
@@ -140,13 +145,13 @@ export function maskError(
 
     // Add stack trace in development if enabled
     if (options.includeStackTrace && error.originalError?.stack) {
-      (formatted.extensions as Record<string, unknown>).stackTrace = error.originalError.stack
+      formatted.extensions.stackTrace = error.originalError.stack
         .split('\n')
         .map((line) => line.trim());
     }
   }
 
-  return formatted;
+  return formatted as GraphQLFormattedError;
 }
 
 /**

@@ -161,7 +161,7 @@ export function createConnectionAck(
 export function createNextMessage(
   id: string,
   data: Record<string, unknown> | null | undefined,
-  errors?: readonly { message: string; [key: string]: unknown }[]
+  errors?: readonly { message: string }[]
 ): NextMessage {
   return {
     id,

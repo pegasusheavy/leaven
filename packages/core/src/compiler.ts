@@ -215,10 +215,10 @@ export class CompiledQuery<_TData = Record<string, unknown>> {
   /**
    * Extract a value from an AST node
    */
-  private extractValue(node: { kind: string; value?: unknown; values?: unknown[]; fields?: Array<{ name: { value: string }; value: unknown }> }): unknown {
+  private extractValue(node: { kind: string; value?: unknown; values?: readonly unknown[]; fields?: ReadonlyArray<{ name: { value: string }; value: unknown }> }): unknown {
     switch (node.kind) {
       case Kind.VARIABLE:
-        return { __variable: (node as { name: { value: string } }).name.value };
+        return { __variable: (node as unknown as { name: { value: string } }).name.value };
       case Kind.INT:
         return parseInt(node.value as string, 10);
       case Kind.FLOAT:
@@ -230,7 +230,7 @@ export class CompiledQuery<_TData = Record<string, unknown>> {
       case Kind.NULL:
         return null;
       case Kind.LIST:
-        return (node.values ?? []).map((v) => this.extractValue(v as { kind: string; value?: unknown; values?: unknown[] }));
+        return (node.values ?? []).map((v) => this.extractValue(v as { kind: string; value?: unknown; values?: readonly unknown[] }));
       case Kind.OBJECT: {
         const obj: Record<string, unknown> = {};
         for (const field of node.fields ?? []) {

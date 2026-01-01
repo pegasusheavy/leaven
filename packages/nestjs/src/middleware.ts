@@ -11,6 +11,7 @@ import {
   Inject,
   type Type,
 } from '@nestjs/common';
+import type { GqlContext } from './types';
 // Express types for NestJS middleware compatibility
 interface Request {
   method: string;
@@ -104,10 +105,10 @@ export class GraphQLMiddleware implements NestMiddleware {
       };
 
       const result = await this.driver.execute(
-        query,
-        variables,
-        context,
-        operationName
+        query as string,
+        variables as Record<string, unknown> | undefined,
+        context as unknown as GqlContext,
+        operationName as string | undefined
       );
 
       // Set appropriate status code
@@ -148,7 +149,7 @@ export class GraphQLMiddleware implements NestMiddleware {
       'Access-Control-Allow-Origin',
       Array.isArray(options.origin)
         ? options.origin.join(', ')
-        : options.origin ?? '*'
+        : typeof options.origin === 'string' ? options.origin : '*'
     );
     res.setHeader(
       'Access-Control-Allow-Methods',

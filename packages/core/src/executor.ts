@@ -95,7 +95,7 @@ export class LeavenExecutor {
   private readonly cache: IDocumentCache | null;
   private readonly parseOptions: ParseOptions;
   private readonly compilerOptions?: CompilerOptions;
-  private readonly introspection: boolean;
+  private readonly _introspection: boolean;
   private readonly maxDepth?: number;
   private readonly maxComplexity?: number;
   private readonly hooks?: ExecutionHooks;
@@ -108,7 +108,7 @@ export class LeavenExecutor {
     this.rootValue = config.rootValue;
     this.parseOptions = config.parseOptions ?? {};
     this.compilerOptions = config.compilerOptions;
-    this.introspection = config.introspection ?? true;
+    this._introspection = config.introspection ?? true;
     this.maxDepth = config.maxDepth;
     this.maxComplexity = config.maxComplexity;
     this.hooks = config.hooks;

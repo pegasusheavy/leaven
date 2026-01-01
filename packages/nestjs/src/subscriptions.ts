@@ -516,8 +516,10 @@ export function Subscription(
   returns: () => unknown,
   options?: { filter?: (payload: unknown, variables: unknown, context: unknown) => boolean }
 ): MethodDecorator {
-  return (target, propertyKey, descriptor) => {
-    Reflect.defineMetadata('leaven:subscription', { returns, options }, descriptor.value);
+  return (_target, _propertyKey, descriptor) => {
+    if (descriptor.value) {
+      Reflect.defineMetadata('leaven:subscription', { returns, options }, descriptor.value);
+    }
     return descriptor;
   };
 }
