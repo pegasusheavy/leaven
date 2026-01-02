@@ -109,7 +109,7 @@ interface NavSection {
             <span class="text-amber-700/40">Fresh Daily</span>
           </div>
           <a
-            href="https://github.com/PegasusHeavyIndustries/leaven"
+            href="https://github.com/pegasusheavy/leaven-graphql"
             target="_blank"
             rel="noopener noreferrer"
             class="flex items-center justify-center gap-2 w-full py-2 px-3 rounded-lg bg-amber-900/30 border border-amber-800/30 text-amber-400/70 hover:text-amber-300 hover:bg-amber-900/50 transition-colors text-sm"

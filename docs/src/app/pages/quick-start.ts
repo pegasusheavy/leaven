@@ -248,8 +248,8 @@ export class QuickStartComponent implements OnInit {
         steps: [
           {
             name: 'Install Leaven GraphQL Package',
-            text: 'Install Leaven using Bun package manager with the command: bun add leaven graphql',
-            code: 'bun add leaven graphql'
+            text: 'Install Leaven using Bun package manager with the command: bun add @leaven-graphql/leaven graphql',
+            code: 'bun add @leaven-graphql/leaven graphql'
           },
           {
             name: 'Define Your GraphQL Schema',
@@ -271,7 +271,7 @@ export class QuickStartComponent implements OnInit {
     );
   }
 
-  installCode = `bun add leaven graphql`;
+  installCode = `bun add @leaven-graphql/leaven graphql`;
 
   minimalInstallCode = `bun add @leaven-graphql/core @leaven-graphql/http graphql`;
 

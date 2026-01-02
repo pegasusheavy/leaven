@@ -24,7 +24,7 @@ import { SeoService } from '../services/seo.service';
         </div>
         <h1 class="text-4xl md:text-5xl font-bold text-white mb-4" itemprop="headline">GraphQL Playground</h1>
         <p class="text-xl text-zinc-400" itemprop="description">
-          Built-in GraphQL Playground and GraphiQL integration with &#64;leaven/playground.
+          Built-in GraphQL Playground and GraphiQL integration with &#64;leaven-graphql/playground.
         </p>
       </header>
 
@@ -32,7 +32,7 @@ import { SeoService } from '../services/seo.service';
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Overview</h2>
         <p class="text-zinc-400 mb-4">
-          The <code class="text-indigo-400">&#64;leaven/playground</code> package provides an interactive
+          The <code class="text-indigo-400">&#64;leaven-graphql/playground</code> package provides an interactive
           GraphQL IDE for exploring and testing your API.
         </p>
         <div class="card p-6">
@@ -55,7 +55,7 @@ import { SeoService } from '../services/seo.service';
       <!-- Quick Start -->
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Quick Start</h2>
-        <p class="text-zinc-400 mb-4">Enable playground with &#64;leaven/http:</p>
+        <p class="text-zinc-400 mb-4">Enable playground with &#64;leaven-graphql/http:</p>
         <app-code-block [code]="quickStartCode" title="server.ts" />
       </section>
 

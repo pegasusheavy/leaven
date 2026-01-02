@@ -24,7 +24,7 @@ import { SeoService } from '../services/seo.service';
         </div>
         <h1 class="text-4xl md:text-5xl font-bold text-white mb-4" itemprop="headline">Error Handling</h1>
         <p class="text-xl text-zinc-400" itemprop="description">
-          Handle and format GraphQL errors with &#64;leaven/errors. Custom error types, masking, and production-safe responses.
+          Handle and format GraphQL errors with &#64;leaven-graphql/errors. Custom error types, masking, and production-safe responses.
         </p>
       </header>
 
@@ -32,7 +32,7 @@ import { SeoService } from '../services/seo.service';
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Overview</h2>
         <p class="text-zinc-400 mb-4">
-          The <code class="text-red-400">&#64;leaven/errors</code> package provides a comprehensive error handling
+          The <code class="text-red-400">&#64;leaven-graphql/errors</code> package provides a comprehensive error handling
           system with custom error types, formatting, and masking for production safety.
         </p>
         <div class="card p-6">
@@ -135,7 +135,7 @@ import { SeoService } from '../services/seo.service';
       <!-- Integration -->
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Integration with HTTP</h2>
-        <p class="text-zinc-400 mb-4">Configure error handling with &#64;leaven/http:</p>
+        <p class="text-zinc-400 mb-4">Configure error handling with &#64;leaven-graphql/http:</p>
         <app-code-block [code]="integrationCode" title="server.ts" />
       </section>
 

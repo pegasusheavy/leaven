@@ -24,7 +24,7 @@ import { SeoService } from '../services/seo.service';
         </div>
         <h1 class="text-4xl md:text-5xl font-bold text-white mb-4" itemprop="headline">Plugin System</h1>
         <p class="text-xl text-zinc-400" itemprop="description">
-          Extend Leaven with plugins for caching, logging, tracing, and more using &#64;leaven/plugins.
+          Extend Leaven with plugins for caching, logging, tracing, and more using &#64;leaven-graphql/plugins.
         </p>
       </header>
 

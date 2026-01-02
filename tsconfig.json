@@ -11,7 +11,7 @@
       "@leaven-graphql/errors": ["packages/errors/src"],
       "@leaven-graphql/plugins": ["packages/plugins/src"],
       "@leaven-graphql/playground": ["packages/playground/src"],
-      "leaven": ["packages/leaven/src"]
+      "@leaven-graphql/leaven": ["packages/leaven/src"]
     }
   },
   "references": [

@@ -24,7 +24,7 @@ import { SeoService } from '../services/seo.service';
         </div>
         <h1 class="text-4xl md:text-5xl font-bold text-white mb-4" itemprop="headline">WebSocket Subscriptions</h1>
         <p class="text-xl text-zinc-400" itemprop="description">
-          Implement real-time GraphQL subscriptions with &#64;leaven/ws using the graphql-ws protocol.
+          Implement real-time GraphQL subscriptions with &#64;leaven-graphql/ws using the graphql-ws protocol.
         </p>
       </header>
 
@@ -32,7 +32,7 @@ import { SeoService } from '../services/seo.service';
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Overview</h2>
         <p class="text-zinc-400 mb-4">
-          The <code class="text-green-400">&#64;leaven/ws</code> package provides WebSocket support for
+          The <code class="text-green-400">&#64;leaven-graphql/ws</code> package provides WebSocket support for
           GraphQL subscriptions using the standard graphql-ws protocol.
         </p>
         <div class="card p-6">

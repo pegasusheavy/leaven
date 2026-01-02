@@ -59,7 +59,7 @@ export class ContextStore<TContext extends BaseContext> {
     });
 
     try {
-      return this.storage.run(context, fn);
+      return this.storage.run(context, fn) as T;
     } finally {
       this.activeContexts.delete(context.requestId);
     }
@@ -76,7 +76,7 @@ export class ContextStore<TContext extends BaseContext> {
     });
 
     try {
-      return await this.storage.run(context, fn);
+      return (await this.storage.run(context, fn)) as T;
     } finally {
       this.activeContexts.delete(context.requestId);
     }

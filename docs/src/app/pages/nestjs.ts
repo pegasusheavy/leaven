@@ -24,7 +24,7 @@ import { SeoService } from '../services/seo.service';
         </div>
         <h1 class="text-4xl md:text-5xl font-bold text-white mb-4" itemprop="headline">NestJS Integration</h1>
         <p class="text-xl text-zinc-400" itemprop="description">
-          Seamlessly integrate Leaven with NestJS using &#64;leaven/nestjs. Guards, decorators, and interceptors included.
+          Seamlessly integrate Leaven with NestJS using &#64;leaven-graphql/nestjs. Guards, decorators, and interceptors included.
         </p>
       </header>
 
@@ -32,13 +32,13 @@ import { SeoService } from '../services/seo.service';
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Overview</h2>
         <p class="text-zinc-400 mb-4">
-          The <code class="text-pink-400">&#64;leaven/nestjs</code> package provides full NestJS integration
+          The <code class="text-pink-400">&#64;leaven-graphql/nestjs</code> package provides full NestJS integration
           with all the decorators, guards, and interceptors you need.
         </p>
         <div class="card p-4 mb-4 border-amber-500/20 bg-amber-500/5">
           <p class="text-zinc-300 text-sm">
             <strong class="text-amber-400">⚡ Bun Runtime:</strong> This package requires
-            <a href="https://github.com/PegasusHeavyIndustries/nestjs-platform-bun" target="_blank" rel="noopener" class="text-amber-400 hover:underline">&#64;pegasusheavy/nestjs-platform-bun</a>
+            <a href="https://github.com/pegasusheavy/nestjs-platform-bun" target="_blank" rel="noopener" class="text-amber-400 hover:underline">&#64;pegasusheavy/nestjs-platform-bun</a>
             as the NestJS HTTP adapter for Bun support.
           </p>
         </div>

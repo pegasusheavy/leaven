@@ -24,7 +24,7 @@ import { SeoService } from '../services/seo.service';
         </div>
         <h1 class="text-4xl md:text-5xl font-bold text-white mb-4" itemprop="headline">Request Context</h1>
         <p class="text-xl text-zinc-400" itemprop="description">
-          Manage request-scoped data with AsyncLocalStorage using &#64;leaven/context.
+          Manage request-scoped data with AsyncLocalStorage using &#64;leaven-graphql/context.
         </p>
       </header>
 
@@ -32,7 +32,7 @@ import { SeoService } from '../services/seo.service';
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Overview</h2>
         <p class="text-zinc-400 mb-4">
-          The <code class="text-teal-400">&#64;leaven/context</code> package provides request-scoped context
+          The <code class="text-teal-400">&#64;leaven-graphql/context</code> package provides request-scoped context
           management using Node.js AsyncLocalStorage. Access request data anywhere without prop drilling.
         </p>
         <div class="card p-6">
@@ -82,7 +82,7 @@ import { SeoService } from '../services/seo.service';
       <!-- Integration -->
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Integration with HTTP</h2>
-        <p class="text-zinc-400 mb-4">Integrate with &#64;leaven/http for automatic context handling:</p>
+        <p class="text-zinc-400 mb-4">Integrate with &#64;leaven-graphql/http for automatic context handling:</p>
         <app-code-block [code]="integrationCode" title="server.ts" />
       </section>
 

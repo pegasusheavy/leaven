@@ -24,7 +24,7 @@ import { SeoService } from '../services/seo.service';
         </div>
         <h1 class="text-4xl md:text-5xl font-bold text-white mb-4" itemprop="headline">HTTP Server</h1>
         <p class="text-xl text-zinc-400" itemprop="description">
-          Set up a high-performance GraphQL HTTP server with &#64;leaven/http using native Bun APIs.
+          Set up a high-performance GraphQL HTTP server with &#64;leaven-graphql/http using native Bun APIs.
         </p>
       </header>
 
@@ -32,7 +32,7 @@ import { SeoService } from '../services/seo.service';
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Overview</h2>
         <p class="text-zinc-400 mb-4">
-          The <code class="text-blue-400">&#64;leaven/http</code> package provides a complete HTTP server
+          The <code class="text-blue-400">&#64;leaven-graphql/http</code> package provides a complete HTTP server
           built on Bun's native HTTP APIs for maximum performance.
         </p>
         <div class="card p-6">

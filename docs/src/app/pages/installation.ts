@@ -109,7 +109,7 @@ import { CodeBlockComponent } from '../components/code-block';
   `,
 })
 export class InstallationComponent {
-  fullInstall = `bun add leaven graphql`;
+  fullInstall = `bun add @leaven-graphql/leaven graphql`;
 
   minimalInstall = `# Core only (for programmatic use)
 bun add @leaven-graphql/core graphql

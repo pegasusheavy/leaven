@@ -110,7 +110,7 @@ const PAGE_DATA: Record<string, PageData> = {
             </svg>
           </a>
           <a
-            href="https://github.com/PegasusHeavyIndustries/leaven"
+            href="https://github.com/pegasusheavy/leaven-graphql"
             target="_blank"
             rel="noopener noreferrer"
             class="btn-secondary inline-flex items-center gap-2"

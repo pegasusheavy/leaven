@@ -130,7 +130,8 @@ export class RedisDocumentCache implements IDocumentCache {
 
       // Handle compressed data
       if (parsed.z) {
-        const decompressed = Bun.gunzipSync(Buffer.from(parsed.d, 'base64'));
+        const buffer = Buffer.from(parsed.d, 'base64');
+        const decompressed = Bun.gunzipSync(new Uint8Array(buffer));
         return this.deserialize(new TextDecoder().decode(decompressed));
       }
 

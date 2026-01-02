@@ -62,7 +62,7 @@ interface FAQ {
       <section class="relative min-h-[90vh] flex flex-col items-center justify-center px-6 py-20" itemscope itemtype="https://schema.org/SoftwareApplication">
         <meta itemprop="name" content="Leaven">
         <meta itemprop="applicationCategory" content="DeveloperApplication">
-        
+
         <div class="max-w-5xl mx-auto text-center">
           <!-- Bakery Badge -->
           <div class="fade-in-up inline-flex items-center gap-3 px-5 py-2.5 rounded-full bg-gradient-to-r from-amber-900/30 to-orange-900/20 border border-amber-700/30 text-amber-300 text-sm font-medium mb-8">
@@ -87,11 +87,11 @@ interface FAQ {
 
           <!-- Tagline -->
           <p class="fade-in-up delay-200 text-xl md:text-2xl text-amber-200/70 max-w-2xl mx-auto mb-4 leading-relaxed" itemprop="description">
-            Hand-crafted with care, 
-            <span class="text-amber-400 font-semibold">risen to perfection</span> 
+            Hand-crafted with care,
+            <span class="text-amber-400 font-semibold">risen to perfection</span>
             for the Bun runtime.
           </p>
-          
+
           <p class="fade-in-up delay-250 text-lg text-amber-300/50 max-w-xl mx-auto mb-10 flex items-center justify-center gap-4">
             <span class="flex items-center gap-1"><fa-icon [icon]="faWheatAwn" class="text-amber-500/60"></fa-icon> Type-safe</span>
             <span class="text-amber-600">•</span>
@@ -108,7 +108,7 @@ interface FAQ {
               <fa-icon [icon]="faArrowRight" class="text-sm"></fa-icon>
             </a>
             <a
-              href="https://github.com/PegasusHeavyIndustries/leaven"
+              href="https://github.com/pegasusheavy/leaven-graphql"
               target="_blank"
               rel="noopener noreferrer"
               class="btn-secondary text-lg px-8 py-4 inline-flex items-center gap-3"
@@ -230,7 +230,7 @@ interface FAQ {
 
           <div class="space-y-4">
             @for (faq of faqs; track faq.question) {
-              <div 
+              <div
                 class="p-6 rounded-2xl bg-gradient-to-br from-amber-950/30 to-orange-950/20 border border-amber-800/20 hover:border-amber-700/40 transition-colors"
                 itemscope
                 itemprop="mainEntity"
@@ -260,7 +260,7 @@ interface FAQ {
             <div class="absolute bottom-4 right-4 text-4xl opacity-20">
               <fa-icon [icon]="faWheatAwn"></fa-icon>
             </div>
-            
+
             <div class="w-20 h-20 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-400 flex items-center justify-center mx-auto mb-6 shadow-xl">
               <fa-icon [icon]="faBreadSlice" class="text-4xl text-amber-900"></fa-icon>
             </div>
@@ -293,7 +293,7 @@ interface FAQ {
             <fa-icon [icon]="faMugHot" class="text-amber-400/60"></fa-icon>
           </div>
           <nav class="flex items-center gap-6" aria-label="Footer navigation">
-            <a href="https://github.com/PegasusHeavyIndustries/leaven" class="hover:text-amber-400 transition-colors flex items-center gap-2" rel="noopener noreferrer">
+            <a href="https://github.com/pegasusheavy/leaven-graphql" class="hover:text-amber-400 transition-colors flex items-center gap-2" rel="noopener noreferrer">
               <fa-icon [icon]="faGithub"></fa-icon>
               GitHub
             </a>
@@ -411,7 +411,7 @@ server.start();
     },
     {
       question: 'How do I start baking with Leaven?',
-      answer: 'Simply run "bun add @leaven-graphql/core graphql" to get started. For the full bakery experience, install "leaven" which includes all our specialty packages.'
+      answer: 'Simply run "bun add @leaven-graphql/core graphql" to get started. For the full bakery experience, install "@leaven-graphql/leaven" which includes all our specialty packages.'
     },
     {
       question: 'Does Leaven work with NestJS?',

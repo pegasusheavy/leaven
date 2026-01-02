@@ -288,7 +288,7 @@ export class SeoService {
       },
       'text': config.codeSnippet,
       'description': config.description ?? '',
-      'codeRepository': 'https://github.com/PegasusHeavyIndustries/leaven'
+      'codeRepository': 'https://github.com/pegasusheavy/leaven-graphql'
     };
   }
 }

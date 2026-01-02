@@ -1,5 +1,5 @@
 {
-  "name": "leaven",
+  "name": "@leaven-graphql/leaven",
   "version": "0.1.0",
   "description": "A high-performance GraphQL library for the Bun runtime",
   "type": "module",
@@ -43,7 +43,55 @@
       "types": "@leaven-graphql/playground"
     }
   },
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "import": "./dist/index.js",
+        "types": "./dist/index.d.ts"
+      },
+      "./core": {
+        "import": "@leaven-graphql/core",
+        "types": "@leaven-graphql/core"
+      },
+      "./schema": {
+        "import": "@leaven-graphql/schema",
+        "types": "@leaven-graphql/schema"
+      },
+      "./http": {
+        "import": "@leaven-graphql/http",
+        "types": "@leaven-graphql/http"
+      },
+      "./ws": {
+        "import": "@leaven-graphql/ws",
+        "types": "@leaven-graphql/ws"
+      },
+      "./context": {
+        "import": "@leaven-graphql/context",
+        "types": "@leaven-graphql/context"
+      },
+      "./errors": {
+        "import": "@leaven-graphql/errors",
+        "types": "@leaven-graphql/errors"
+      },
+      "./plugins": {
+        "import": "@leaven-graphql/plugins",
+        "types": "@leaven-graphql/plugins"
+      },
+      "./playground": {
+        "import": "@leaven-graphql/playground",
+        "types": "@leaven-graphql/playground"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun --external @leaven-graphql/* --external graphql && tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
