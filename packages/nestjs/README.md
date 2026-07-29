@@ -10,6 +10,30 @@ NestJS integration for Leaven GraphQL - a high-performance GraphQL execution eng
 bun add @leaven-graphql/nestjs @leaven-graphql/core @leaven-graphql/context @leaven-graphql/errors @lexmata/nestjs-platform-bun
 ```
 
+### Required TypeScript configuration
+
+NestJS reads its metadata through `reflect-metadata`, and Bun only emits that
+metadata when both decorator flags are on:
+
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  }
+}
+```
+
+Without them Bun fails at *import* time with an error that names neither
+decorators nor NestJS:
+
+```
+TypeError: undefined is not an object (evaluating 'descriptor.value')
+```
+
+If you see that, check these two flags before anything else.
+
 ## Quick Start
 
 ### Bootstrap with Bun
@@ -89,14 +113,21 @@ export class AppModule {}
 
 ## Features
 
-> ### ⚠️ What actually executes today
+> ### ⚠️ Two paths, and only one of them runs the NestJS pipeline
 >
-> Read this before the sections below.
+> Read this before the sections below. Which path you pick decides whether the
+> guards, interceptors and parameter decorators documented here execute.
 >
-> `LeavenModule` builds a schema from `schema`, or from `typeDefs` + `resolvers`,
-> and serves it over HTTP. In that path **your resolvers are plain functions
-> invoked directly by graphql-js.** They are not NestJS route handlers, so the
-> NestJS execution pipeline never runs around them:
+> **`GraphQLModule.forRoot({ driver: LeavenGraphQLDriver })` — the pipeline runs.**
+> `@nestjs/graphql` builds the schema from your `@Resolver()` classes and wraps
+> every field resolver in NestJS's `ExternalContextCreator`, so `@UseGuards`,
+> `@UseInterceptors`, pipes, filters and parameter decorators all fire; Leaven
+> executes the finished schema. See
+> [Integration with @nestjs/graphql](#integration-with-nestjsgraphql).
+>
+> **`LeavenModule.forRoot({ schema })` or `{ typeDefs, resolvers }` — it does not.**
+> In that path **your resolvers are plain functions invoked directly by
+> graphql-js.** They are not NestJS handlers, so nothing wraps them:
 >
 > - `@UseGuards(...)` — `AuthGuard`, `RolesGuard`, `PermissionsGuard`,
 >   `ComplexityGuard`, `DepthGuard` — **does not fire.**
@@ -108,22 +139,17 @@ export class AppModule {}
 >   applied**; your resolver receives the raw graphql-js
 >   `(root, args, context, info)` positional arguments instead.
 >
-> Those constructs only run when something registers your resolvers as NestJS
-> handlers, which means a `@nestjs/graphql` driver bridge
-> (`AbstractGraphQLDriver`). **Leaven does not ship one yet** — see
-> [Integration with @nestjs/graphql](#integration-with-nestjsgraphql).
+> Put authorization and argument handling inside your resolver functions or in
+> the `context` factory on that path, or switch to the driver.
 >
-> What *does* work today, unconditionally: the schema build (including
-> `@Description` / `@Deprecated`), the HTTP endpoint and playground, the
-> `context` factory, `formatError`, the document cache, metrics, `@InjectPubSub`,
-> and `SubscriptionManager`'s graphql-ws protocol handling.
+> What works on **both** paths: the schema build, the HTTP endpoint and
+> playground, the `context` factory, `formatError`, the document cache, metrics,
+> and — for `LeavenModule` — `@InjectPubSub` and `SubscriptionManager`'s
+> graphql-ws protocol handling.
 >
 > The guards, interceptors, decorators and `GqlExecutionContext` documented below
 > are also usable directly — they are ordinary NestJS classes and helpers, and
-> they work in any NestJS pipeline you invoke them from (including one you build
-> yourself, and including unit tests). The examples are written against the
-> `@Resolver`-based style they are designed for; treat them as the target shape,
-> not as something the shipped HTTP path will run for you.
+> they work in any NestJS pipeline you invoke them from, including unit tests.
 
 ### Decorators
 
@@ -542,7 +568,7 @@ export class SchemaService {
 | `introspection` | `boolean` | `true` (dev) | Enable introspection |
 | `cache` | `DocumentCacheConfig \| boolean` | - | Document cache configuration |
 | `maxComplexity` | `number` | - | Maximum query complexity. Enforced by the executor before any resolver runs — an over-budget document is rejected with a `ComplexityError` |
-| `maxDepth` | `number` | - | Maximum query depth. **Only recorded on the context** (as `_queryDepth`) for `DepthGuard`, so it is not enforced on the shipped HTTP path — see the caveat under [Features](#features) |
+| `maxDepth` | `number` | - | Maximum query depth. **Only recorded on the context** (as `_queryDepth`) for `DepthGuard`, so it is not enforced on `LeavenModule`'s HTTP path — see the caveat under [Features](#features). The `LeavenGraphQLDriver` path enforces it in the executor |
 | `metrics` | `boolean` | `false` | Enable execution metrics |
 | `context` | `ContextFactory` | - | Custom context factory |
 | `formatError` | `FormatErrorFn` | - | Error formatting function |
@@ -559,33 +585,123 @@ them. Removal target: 0.3.0.
 |--------|------|--------|
 | `debug` | `boolean` | Not implemented; setting it has no effect |
 | `sortSchema` | `boolean` | No effect — pass `sortSchema` to `generateSchemaFile` instead |
-| `buildSchemaOptions` | `BuildSchemaOptions` | No effect — there is no code-first pipeline |
+| `buildSchemaOptions` | `BuildSchemaOptions` | No effect — `LeavenModule` has no code-first pipeline. For code-first, use `LeavenGraphQLDriver` with `GraphQLModule.forRoot()`, which honors `@nestjs/graphql`'s own `buildSchemaOptions` |
 | `plugins` | `LeavenPlugin[]` | No effect — use NestJS interceptors and guards |
-| `autoSchemaFile` | `boolean \| string` | Not implemented; configuring it without `schema` or `typeDefs` throws at bootstrap |
+| `autoSchemaFile` | `boolean \| string` | Not implemented by `LeavenModule`; configuring it without `schema` or `typeDefs` throws at bootstrap. `GraphQLModule.forRoot({ driver: LeavenGraphQLDriver, autoSchemaFile: true })` supports it fully |
 
 ## Integration with @nestjs/graphql
 
-**There is no `@nestjs/graphql` integration yet, and `LeavenDriver` is not a
-`@nestjs/graphql` driver.**
+`LeavenGraphQLDriver` is a real `@nestjs/graphql` driver: it extends
+`AbstractGraphQLDriver` and implements `start()` and `stop()`. Pass it to
+`GraphQLModule.forRoot()` and your `@Resolver()` classes become NestJS
+handlers, executed by Leaven.
 
-`GraphQLModule.forRoot({ driver })` requires a `Type<AbstractGraphQLDriver>` —
-a class extending `AbstractGraphQLDriver` and implementing its abstract
-`start(options)` and `stop()`. `LeavenDriver` extends nothing and has neither
-method, so passing it as `driver` does not typecheck and would throw at
-bootstrap. Do not do it.
+**On this path guards, interceptors, pipes, filters and parameter decorators
+all execute.**
 
-This is the gap behind the caveat at the top of [Features](#features).
-`@nestjs/graphql` is what turns `@Resolver`-decorated classes into NestJS
-handlers, which is what makes `@UseGuards`, `@UseInterceptors`, and parameter
-decorators such as `@Args()` and `@Context()` run at all. Without a driver
-bridge there is no supported route by which any of them execute against a
-Leaven-served schema.
+```typescript
+import { Module } from '@nestjs/common';
+import { GraphQLModule } from '@nestjs/graphql';
+import { LeavenGraphQLDriver, type LeavenDriverConfig } from '@leaven-graphql/nestjs';
+import { UserResolver } from './user.resolver';
 
-Until a `LeavenGraphQLDriver extends AbstractGraphQLDriver` exists, use the
-supported path — `LeavenModule.forRoot({ schema })` or
-`LeavenModule.forRoot({ typeDefs, resolvers })` — and put authorization,
-logging, and argument handling inside your resolver functions or in the
-`context` factory, which runs once per request before execution:
+@Module({
+  imports: [
+    GraphQLModule.forRoot<LeavenDriverConfig>({
+      driver: LeavenGraphQLDriver,
+      // Code-first. `true` keeps the generated schema in memory; pass a path
+      // to also write it to disk.
+      autoSchemaFile: true,
+      playground: true,
+      path: '/graphql',
+      // Leaven executor options
+      cache: { maxSize: 1000 },
+      metrics: true,
+      maxComplexity: 1000,
+      maxDepth: 10,
+      // Runs once per request; merged over the built-in `{ req, res }`
+      context: ({ req }) => ({ req, user: req.user ?? null }),
+    }),
+  ],
+  providers: [UserResolver],
+})
+export class AppModule {}
+```
+
+```typescript
+import { Resolver, Query, Args } from '@nestjs/graphql';
+import { UseGuards, UseInterceptors } from '@nestjs/common';
+import {
+  AuthGuard,
+  RolesGuard,
+  Roles,
+  LoggingInterceptor,
+  Context,
+} from '@leaven-graphql/nestjs';
+
+@Resolver()
+@UseGuards(AuthGuard, RolesGuard)
+@UseInterceptors(LoggingInterceptor)
+export class UserResolver {
+  @Query(() => String)
+  @Roles('admin')
+  public adminReport(
+    @Args('id', { type: () => String }) id: string,
+    @Context() ctx: { user: { id: string } },
+  ): string {
+    // The guards ran before this body. `id` and `ctx` were injected by the
+    // parameter decorators.
+    return `${id} for ${ctx.user.id}`;
+  }
+}
+```
+
+### Why it works
+
+`GraphQLModule.onModuleInit` calls `generateSchema()` before `start()`.
+`generateSchema()` is inherited from `AbstractGraphQLDriver` and delegates to
+`GraphQLFactory`, which builds the schema from your `@Resolver()` classes and
+wraps every field resolver in NestJS's `ExternalContextCreator` — the wrapper
+that runs the execution pipeline. By the time `start()` receives
+`options.schema`, that pipeline is already part of the schema; the driver
+constructs a `LeavenExecutor` over it and serves `POST <path>` (plus
+`GET <path>` for GraphiQL when `playground` is enabled).
+
+### Driver options
+
+`LeavenDriverConfig` accepts everything `GqlModuleOptions` does, plus:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `cache` | `DocumentCacheConfig \| boolean \| IDocumentCache` | Document/validation cache passed to the executor |
+| `metrics` | `boolean` | Collect per-operation metrics and expose them under `extensions.metrics` |
+| `maxComplexity` | `number` | Rejected by the executor before any resolver runs |
+| `maxDepth` | `number` | Rejected by the executor at parse time |
+| `playground` | `boolean` | Serve GraphiQL on `GET <path>` |
+| `subscriptionEndpoint` | `string` | WebSocket endpoint advertised to GraphiQL |
+| `formatError` | `(error) => error` | Final transformation applied to every response error |
+| `includeStacktraceInErrorResponses` | `boolean` | Include stack traces; also disables production masking |
+
+### Errors and HTTP status
+
+Every error leaves the driver carrying an `ErrorCode`, and the status is
+derived from it (`400` validation/complexity/depth/input, `401`
+authentication, `403` authorization, `404` not found, `429` rate limit, `500`
+otherwise) — but **only for a total failure**. A response carrying `data`
+alongside `errors` is a spec-conformant partial success and stays `200`.
+
+NestJS `HttpException`s — what guards, pipes and filters throw — are
+translated to the equivalent Leaven error, so `UnauthorizedException` reaches
+the client as `401 UNAUTHENTICATED` rather than as a masked `500`.
+
+### The `LeavenModule` alternative
+
+`LeavenModule.forRoot({ typeDefs, resolvers })` remains supported and is the
+lighter option when you do not want the NestJS pipeline: it serves a schema
+built from plain resolver functions. On that path guards, interceptors and
+parameter decorators **do not run** (see the callout under
+[Features](#features)); put authorization in the resolver or in the `context`
+factory:
 
 ```typescript
 import { Module } from '@nestjs/common';
@@ -601,7 +717,7 @@ import { AuthorizationError } from '@leaven-graphql/errors';
       playground: true,
       // Runs before execution. Throwing a Leaven error here reaches the client
       // with its own status (401 for AuthenticationError), so this is the
-      // practical stand-in for an AuthGuard today.
+      // practical stand-in for an AuthGuard on this path.
       context: async (request) => {
         const token = request.headers.get('authorization');
         return { user: token ? await verify(token) : null };
@@ -611,9 +727,6 @@ import { AuthorizationError } from '@leaven-graphql/errors';
 })
 export class AppModule {}
 ```
-
-Per-field checks then read `context.user` from the resolver's third positional
-argument:
 
 ```typescript
 const resolvers = {
@@ -628,11 +741,11 @@ const resolvers = {
 };
 ```
 
-One cost limit does not depend on the bridge: **`maxComplexity` is enforced by
-the executor itself**, which rejects an over-budget document with a
-`ComplexityError` before any resolver runs. `maxDepth` is *not* — it is only
-recorded on the context for `DepthGuard`, so it needs the bridge like every
-other guard.
+One cost limit does not depend on which path you choose: **`maxComplexity` is
+enforced by the executor itself**, which rejects an over-budget document with a
+`ComplexityError` before any resolver runs. `maxDepth` under `LeavenModule` is
+only recorded on the context for `DepthGuard`, so there it needs the driver
+like every other guard.
 
 ## License
 
