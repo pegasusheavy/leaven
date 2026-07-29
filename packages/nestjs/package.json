@@ -1,6 +1,6 @@
 {
   "name": "@leaven-graphql/nestjs",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "NestJS integration for Leaven GraphQL",
   "type": "module",
   "main": "./src/index.ts",
@@ -34,8 +34,8 @@
   },
   "dependencies": {
     "@graphql-tools/schema": "^10.0.0",
-    "@leaven-graphql/core": "workspace:*",
     "@leaven-graphql/context": "workspace:*",
+    "@leaven-graphql/core": "workspace:*",
     "@leaven-graphql/errors": "workspace:*",
     "@leaven-graphql/playground": "workspace:*",
     "@leaven-graphql/ws": "workspace:*"
@@ -47,6 +47,7 @@
     "graphql": "^16.0.0"
   },
   "devDependencies": {
+    "@lexmata/nestjs-platform-bun": "^0.4.0",
     "@nestjs/common": "^11.1.19",
     "@nestjs/core": "^11.1.19",
     "@nestjs/graphql": "^13.2.5",

@@ -6,7 +6,11 @@
  */
 
 import { describe, test, expect, beforeEach } from 'bun:test';
-import { buildSchema } from 'graphql';
+import {
+  buildSchema,
+  GraphQLError,
+  type GraphQLFormattedError,
+} from 'graphql';
 import {
   ComplexityError,
   ErrorCode,
@@ -585,6 +589,151 @@ describe('LeavenExecutor', () => {
       const error = result.response.errors![0];
       expect(error?.message).toBe('Internal server error');
       expect(error?.extensions?.code).toBe(ErrorCode.INTERNAL_ERROR);
+    });
+  });
+
+  describe('formatExecutionError', () => {
+    /**
+     * A framework-style exception: it carries no `extensions`, so graphql-js
+     * has nothing to adopt and the serialized error would be codeless. This is
+     * exactly the case (a NestJS `HttpException`) the hook exists for.
+     */
+    class HttpishException extends Error {
+      public constructor(
+        message: string,
+        public readonly status: number
+      ) {
+        super(message);
+        this.name = 'HttpishException';
+      }
+    }
+
+    const throwingSchema = buildSchema(`
+      type Query { boom: String }
+      type Subscription { ticks: Tick, failing: Int }
+      type Tick { boom: String }
+    `);
+
+    const throwingRoot = {
+      boom: () => {
+        throw new HttpishException('Forbidden resource', 403);
+      },
+      failing: () => {
+        throw new HttpishException('Forbidden resource', 403);
+      },
+      ticks: async function* () {
+        yield {
+          ticks: {
+            boom: () => {
+              throw new HttpishException('Forbidden resource', 403);
+            },
+          },
+        };
+      },
+    };
+
+    /** Maps the framework exception the way a transport driver would. */
+    const formatExecutionError = (error: GraphQLError): GraphQLFormattedError => {
+      const formatted = error.toJSON();
+      const original = error.originalError;
+      if (!(original instanceof HttpishException)) {
+        return formatted;
+      }
+      return {
+        ...formatted,
+        extensions: { ...formatted.extensions, code: ErrorCode.FORBIDDEN },
+      };
+    };
+
+    test('should receive a GraphQLError whose originalError is intact', async () => {
+      const seen: GraphQLError[] = [];
+
+      const result = await new LeavenExecutor({
+        schema: throwingSchema,
+        rootValue: throwingRoot,
+        formatExecutionError: (error) => {
+          seen.push(error);
+          return error.toJSON();
+        },
+      }).execute({ query: '{ boom }' });
+
+      expect(result.response.errors).toHaveLength(1);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toBeInstanceOf(GraphQLError);
+      expect(seen[0]?.originalError).toBeInstanceOf(HttpishException);
+      expect((seen[0]?.originalError as HttpishException).status).toBe(403);
+      // The detail the hook exists to recover: `path` is still there too.
+      expect(seen[0]?.path).toEqual(['boom']);
+    });
+
+    test("should use the hook's return value in the response", async () => {
+      const result = await new LeavenExecutor({
+        schema: throwingSchema,
+        rootValue: throwingRoot,
+        formatExecutionError,
+      }).execute({ query: '{ boom }' });
+
+      const error = result.response.errors![0];
+      expect(error?.message).toBe('Forbidden resource');
+      expect(error?.extensions?.code).toBe(ErrorCode.FORBIDDEN);
+      expect(error?.path).toEqual(['boom']);
+    });
+
+    test('should leave the response unchanged when no hook is configured', async () => {
+      const result = await new LeavenExecutor({
+        schema: throwingSchema,
+        rootValue: throwingRoot,
+      }).execute({ query: '{ boom }' });
+
+      const error = result.response.errors![0];
+      expect(error?.message).toBe('Forbidden resource');
+      // Without the hook the framework exception is codeless — the very
+      // limitation the hook works around.
+      expect(error?.extensions?.code).toBeUndefined();
+    });
+
+    test('should apply to a subscription that fails before streaming', async () => {
+      const result = await new LeavenExecutor({
+        schema: throwingSchema,
+        rootValue: throwingRoot,
+        formatExecutionError,
+      }).subscribe({ query: 'subscription { failing }' });
+
+      expect(Symbol.asyncIterator in result).toBe(false);
+      const response = result as GraphQLResponse;
+      expect(response.errors![0]?.extensions?.code).toBe(ErrorCode.FORBIDDEN);
+    });
+
+    test('should apply to errors carried by a streamed subscription payload', async () => {
+      const result = await new LeavenExecutor({
+        schema: throwingSchema,
+        rootValue: throwingRoot,
+        formatExecutionError,
+      }).subscribe({ query: 'subscription { ticks { boom } }' });
+
+      expect(Symbol.asyncIterator in result).toBe(true);
+      const iterator = result as AsyncIterableIterator<GraphQLResponse>;
+      const { value } = await iterator.next();
+
+      expect(value.errors![0]?.message).toBe('Forbidden resource');
+      expect(value.errors![0]?.extensions?.code).toBe(ErrorCode.FORBIDDEN);
+      await iterator.return?.();
+    });
+
+    test('should not be applied to validation errors', async () => {
+      let called = 0;
+
+      const result = await new LeavenExecutor({
+        schema: throwingSchema,
+        rootValue: throwingRoot,
+        formatExecutionError: (error) => {
+          called += 1;
+          return error.toJSON();
+        },
+      }).execute({ query: '{ nonexistent }' });
+
+      expect(result.response.errors!.length).toBeGreaterThan(0);
+      expect(called).toBe(0);
     });
   });
 

@@ -293,7 +293,12 @@ const auditPlugin: Plugin = {
 ## Plugin Manager
 
 ```typescript
-import { createPluginManager } from '@leaven-graphql/plugins';
+import {
+  createPluginManager,
+  createLoggingPlugin,
+  createTracingPlugin,
+  createDepthLimitPlugin,
+} from '@leaven-graphql/plugins';
 
 const manager = createPluginManager({
   schema,
@@ -340,7 +345,14 @@ retries the whole run.
 name, since it is registered like any other plugin.
 
 ```typescript
-import { composePlugins } from '@leaven-graphql/plugins';
+import {
+  composePlugins,
+  createPluginManager,
+  createLoggingPlugin,
+  createTracingPlugin,
+  createDepthLimitPlugin,
+  createComplexityPlugin,
+} from '@leaven-graphql/plugins';
 
 const combinedPlugin = composePlugins(
   'guardrails',

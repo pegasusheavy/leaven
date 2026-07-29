@@ -179,6 +179,7 @@ export class SchemaComponent implements OnInit {
     ]);
   }
 
+  // doc-check: skip - shell command, not TypeScript
   installCode = `bun add @leaven-graphql/schema graphql`;
 
   builderCode = `import { SchemaBuilder } from '@leaven-graphql/schema';
@@ -254,10 +255,12 @@ const schema = mergeSchemasFromStrings([
 
   resolversCode = `import { createResolvers, mergeResolvers } from '@leaven-graphql/schema';
 
-const userResolvers = createResolvers({
+// The context type parameter is what makes \`context\` typed inside a resolver;
+// parent values stay \`unknown\`, so narrow them where you use them.
+const userResolvers = createResolvers<AppContext>({
   Query: {
-    user: async (_, { id }, context) => {
-      return context.db.users.findById(id);
+    user: async (_, args, context) => {
+      return context.db.users.findById((args as { id: string }).id);
     },
     users: async (_, __, context) => {
       return context.db.users.findAll();
@@ -265,12 +268,12 @@ const userResolvers = createResolvers({
   },
   User: {
     posts: async (user, _, context) => {
-      return context.db.posts.findByAuthor(user.id);
+      return context.db.posts.findByAuthor((user as User).id);
     },
   },
 });
 
-const postResolvers = createResolvers({
+const postResolvers = createResolvers<AppContext>({
   Query: {
     posts: async (_, __, context) => {
       return context.db.posts.findAll();
@@ -278,13 +281,13 @@ const postResolvers = createResolvers({
   },
   Post: {
     author: async (post, _, context) => {
-      return context.db.users.findById(post.authorId);
+      return context.db.users.findById((post as Post).authorId);
     },
   },
 });
 
-// Merge resolvers
-const resolvers = mergeResolvers([userResolvers, postResolvers]);`;
+// mergeResolvers is variadic — one argument per resolver map, not an array
+const resolvers = mergeResolvers(userResolvers, postResolvers);`;
 
   loaderCode = `import {
   loadSchemaFromFile,
@@ -301,33 +304,36 @@ const schema2 = await loadSchemaFromDirectory('./schemas');
 // Load files matching a glob pattern
 const schema3 = await loadSchemaFromGlob('./modules/**/*.graphql');`;
 
-  directivesCode = `import { createDirective, applyDirectives } from '@leaven-graphql/schema';
+  directivesCode = `import { DirectiveLocation } from 'graphql';
+import {
+  cacheControlDirective,
+  createDirective,
+  addDirective,
+  addDirectives,
+  applyDirectives,
+  getDirectiveValues,
+} from '@leaven-graphql/schema';
 
-// Create an @auth directive
+// Create an @auth directive. Argument types are declared as
+// 'String', 'Boolean' or 'Int'.
 const authDirective = createDirective({
   name: 'auth',
-  locations: ['FIELD_DEFINITION'],
+  description: 'Requires authentication',
+  locations: [DirectiveLocation.FIELD_DEFINITION],
   args: {
-    requires: 'Role = USER',
-  },
-  transform: (schema, directiveArgs) => {
-    // Transform the field to add auth check
-    return wrapFieldWithAuth(schema, directiveArgs.requires);
+    requires: { type: 'String', defaultValue: 'USER' },
   },
 });
 
-// Create a @deprecated directive
-const deprecatedDirective = createDirective({
-  name: 'deprecated',
-  locations: ['FIELD_DEFINITION', 'ENUM_VALUE'],
-  args: {
-    reason: 'String',
-  },
+// applyDirectives runs schema transformers keyed by directive name
+const schema = applyDirectives(baseSchema, {
+  auth: (input) => addDirective(input, authDirective),
 });
 
-// Apply directives to schema
-const schema = applyDirectives(baseSchema, [
-  authDirective,
-  deprecatedDirective,
-]);`;
+// Installing several at once rebuilds the schema only once
+const schema2 = addDirectives(baseSchema, [authDirective, cacheControlDirective]);
+
+// Read the arguments a directive was applied with
+const fields = schema.getQueryType()!.toConfig().fields;
+const args = getDirectiveValues(fields.secret!, 'auth'); // { requires: 'ADMIN' } | null`;
 }

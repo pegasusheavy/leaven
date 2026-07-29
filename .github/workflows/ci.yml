@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -52,6 +52,30 @@ jobs:
 
       - name: Run TypeScript
         run: pnpm typecheck
+
+  docs:
+    name: Doc Samples
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Type-checks every TypeScript block in the READMEs and docs-site pages
+      # against the real package source, so a renamed or removed export fails
+      # here instead of shipping as stale documentation.
+      - name: Type-check documentation samples
+        run: pnpm check:docs
 
   test:
     name: Test

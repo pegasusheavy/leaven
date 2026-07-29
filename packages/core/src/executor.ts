@@ -78,6 +78,37 @@ export interface ExecutorConfig {
    * nowhere to put them.
    */
   metrics?: boolean;
+  /**
+   * Serialize an error raised by *execution* while the graphql-js
+   * {@link GraphQLError} is still intact.
+   *
+   * The executor otherwise reports execution errors as `error.toJSON()`, which
+   * emits only `{ message, locations, path, extensions }` and **drops
+   * `originalError`**. That loss matters for a transport sitting on top of a
+   * framework with its own error currency: graphql-js sets
+   * `extensions = extensions ?? originalError?.extensions ?? {}`, so a
+   * `LeavenError` (which carries `extensions`) survives serialization with its
+   * `code`, but a framework exception without an `extensions` property — a
+   * NestJS `HttpException`, say — arrives with `extensions: {}` and is
+   * indistinguishable from a crash. This hook runs *before* `toJSON()`, so it
+   * is the only place such an error can still be recognised and mapped to an
+   * `ErrorCode`.
+   *
+   * Not to be confused with the transports' `formatError` option (e.g.
+   * `LeavenModuleOptions.formatError`), which is a final, response-level pass
+   * over an already-serialized `GraphQLFormattedError`. This hook is
+   * executor-level and receives the live `GraphQLError`.
+   *
+   * Applies to the errors of an execution result and of a subscription — the
+   * paths where a resolver's `originalError` exists. It is deliberately *not*
+   * applied to parse, validation or complexity rejections (which never carry a
+   * framework `originalError` and are already given an `ErrorCode` by Leaven),
+   * nor to an error thrown out of the executor itself, which is formatted by
+   * the errors package.
+   *
+   * Defaults to `error.toJSON()`.
+   */
+  formatExecutionError?: (error: GraphQLError) => GraphQLFormattedError;
 }
 
 /**
@@ -197,6 +228,12 @@ export class LeavenExecutor {
   private readonly maxComplexity?: number;
   private readonly hooks?: ExecutionHooks;
   private readonly metricsEnabled: boolean;
+  /**
+   * Serializer applied to execution and subscription errors. Bound once so it
+   * can be handed to the subscription iterator, whose `this` is the iterator.
+   * See {@link ExecutorConfig.formatExecutionError}.
+   */
+  private readonly serializeExecutionError: (error: GraphQLError) => GraphQLFormattedError;
 
   /** Maximum number of compiled queries retained in the LRU cache */
   private static readonly MAX_COMPILED_QUERIES = 1000;
@@ -239,6 +276,8 @@ export class LeavenExecutor {
     this.maxComplexity = config.maxComplexity;
     this.hooks = config.hooks;
     this.metricsEnabled = config.metrics ?? false;
+    this.serializeExecutionError =
+      config.formatExecutionError ?? ((error: GraphQLError) => error.toJSON());
     this.compiledQueries = new Map();
 
     // Initialize cache
@@ -612,7 +651,7 @@ export class LeavenExecutor {
 
       const response: GraphQLResponse<TData> = {
         data: result.data as TData | undefined,
-        errors: result.errors?.map((e) => e.toJSON()),
+        errors: result.errors?.map((e) => this.serializeExecutionError(e)),
       };
 
       if (this.hooks?.onExecuted) {
@@ -712,10 +751,12 @@ export class LeavenExecutor {
         operationName: request.operationName,
       });
 
+      const serializeError = this.serializeExecutionError;
+
       // If it's an error result (not an async iterable), return it as a response
       if (!(Symbol.asyncIterator in result)) {
         return {
-          errors: (result as GraphQLExecutionResult).errors?.map((e) => e.toJSON()),
+          errors: (result as GraphQLExecutionResult).errors?.map((e) => serializeError(e)),
         };
       }
 
@@ -734,7 +775,7 @@ export class LeavenExecutor {
           return {
             value: {
               data: value.data as TData | undefined,
-              errors: value.errors?.map((e) => e.toJSON()),
+              errors: value.errors?.map((e) => serializeError(e)),
             },
             done: false,
           };

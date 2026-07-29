@@ -78,6 +78,32 @@ import { SeoService } from '../services/seo.service';
         <app-code-block [code]="metricsCode" title="metrics.ts" />
       </section>
 
+      <!-- Execution error formatting -->
+      <section class="mb-12">
+        <h2 class="text-2xl font-semibold text-white mb-4">Formatting Execution Errors</h2>
+        <p class="text-zinc-400 mb-4">
+          Execution errors are reported as <code class="text-amber-400">error.toJSON()</code>, which emits only
+          <code class="text-amber-400">{{ '{' }} message, locations, path, extensions {{ '}' }}</code> and drops
+          <code class="text-amber-400">originalError</code>. graphql-js falls back to
+          <code class="text-amber-400">originalError.extensions</code>, so a
+          <code class="text-amber-400">LeavenError</code> keeps its <code class="text-amber-400">code</code> —
+          but a framework exception with no <code class="text-amber-400">extensions</code> of its own,
+          such as a NestJS <code class="text-amber-400">HttpException</code>, arrives with
+          <code class="text-amber-400">extensions: {{ '{}' }}</code> and is indistinguishable from a crash.
+          <code class="text-amber-400">formatExecutionError</code> runs before
+          <code class="text-amber-400">toJSON()</code>, so it is the only place such an error can still be
+          recognised and mapped to an <code class="text-amber-400">ErrorCode</code>.
+        </p>
+        <app-code-block [code]="formatExecutionErrorCode" title="format-execution-error.ts" />
+        <p class="text-zinc-400 mt-4">
+          It applies to the errors of an execution result and of both subscription paths — where a
+          resolver's <code class="text-amber-400">originalError</code> exists. It is deliberately not applied
+          to parse, validation or complexity rejections, which Leaven synthesises, which never carry a
+          framework <code class="text-amber-400">originalError</code>, and which already guarantee an
+          <code class="text-amber-400">ErrorCode</code>.
+        </p>
+      </section>
+
       <!-- Navigation -->
       <nav class="flex items-center justify-between pt-8 border-t border-zinc-800">
         <a routerLink="/installation" class="group flex items-center gap-2 text-zinc-400 hover:text-white transition-colors">
@@ -143,7 +169,10 @@ console.log(result.response.data);
   maxDepth?: number;                  // Query depth limit
   maxComplexity?: number;             // Query complexity limit
   hooks?: ExecutionHooks;             // Lifecycle hooks
-  metrics?: boolean;                  // Enable execution metrics
+  metrics?: boolean;                  // Enable execution metrics (execute() only)
+  formatExecutionError?:              // Serialize an execution error while the
+    (error: GraphQLError)             // graphql-js GraphQLError is still intact
+      => GraphQLFormattedError;       // (default: error.toJSON())
 }`;
 
   cachingCode = `const executor = new LeavenExecutor({
@@ -200,4 +229,30 @@ console.log(result.metrics);
 //
 // Note: ExecutionMetrics also declares resolverCount, but the executor does
 // not track it and omits the field rather than reporting a wrong count.`;
+
+  formatExecutionErrorCode = `import { LeavenExecutor } from '@leaven-graphql/core';
+
+const executor = new LeavenExecutor({
+  schema,
+  formatExecutionError: (error) => {
+    const cause = error.originalError;
+
+    // The live GraphQLError is still in hand, so a framework exception is
+    // still recognisable here.
+    if (cause instanceof HttpException) {
+      return {
+        message: cause.message,
+        path: error.path,
+        locations: error.locations,
+        extensions: { ...error.extensions, code: codeForStatus(cause.getStatus()) },
+      };
+    }
+
+    return error.toJSON();
+  },
+});
+
+// Not the same thing as a transport's formatError option (e.g.
+// LeavenModuleOptions.formatError), which is a final, response-level pass over
+// an already-serialized GraphQLFormattedError.`;
 }

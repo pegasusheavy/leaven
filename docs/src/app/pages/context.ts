@@ -174,6 +174,7 @@ export class ContextComponent implements OnInit {
     ]);
   }
 
+  // doc-check: skip - shell command, not TypeScript
   installCode = `bun add @leaven-graphql/context`;
 
   basicCode = `import { createRequestContext } from '@leaven-graphql/context';
@@ -200,14 +201,22 @@ console.log(context.getElapsedTime());           // ms since startTime
 console.log(context.toJSON());                   // { requestId, startTime, method, url }`;
 
   storeCode = `import { ContextStore, createContextStore } from '@leaven-graphql/context';
+import type { BaseContext } from '@leaven-graphql/context';
+
+// The type parameter is what puts your own fields on the stored context
+interface SessionContext extends BaseContext {
+  userId: string;
+  role: string;
+}
 
 // Create a global context store
-const store = createContextStore();
+const store = createContextStore<SessionContext>();
 
 // Run code with context
-store.run({ userId: '123', role: 'admin' }, async () => {
-  // Access context anywhere
-  const context = store.getContext();
+store.run({ requestId: 'req-1', startTime: Date.now(), userId: '123', role: 'admin' }, async () => {
+  // Access context anywhere. getContext() returns \`TContext | undefined\`;
+  // requireContext() throws instead of handing back undefined.
+  const context = store.requireContext();
   console.log(context.userId); // '123'
 
   // Context is available in nested functions
@@ -216,7 +225,7 @@ store.run({ userId: '123', role: 'admin' }, async () => {
 
 // In a nested function
 async function someNestedFunction() {
-  const context = store.getContext();
+  const context = store.requireContext();
   console.log(context.role); // 'admin'
 }`;
 
@@ -247,7 +256,8 @@ const resolvers = {
   },
 };`;
 
-  customCode = `import type { BaseContext, ContextExtension } from '@leaven-graphql/context';
+  customCode = `import { LeavenExecutor } from '@leaven-graphql/core';
+import type { BaseContext, ContextExtension } from '@leaven-graphql/context';
 
 // Define your custom context type
 interface AppContext extends BaseContext {

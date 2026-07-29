@@ -1,8 +1,29 @@
 name: Release
 
+# git-flow release model.
+#
+# Changesets accumulate on `develop` as features merge. This workflow splits
+# the two halves of a changesets release so each runs on the branch it belongs
+# to:
+#
+#   develop -> version:  opens the "chore: version packages" PR against
+#                        `develop`, applying pending changesets to package
+#                        versions and CHANGELOGs. Never publishes.
+#   main    -> publish:  publishes the versions `main` carries and tags the
+#                        release. Never opens a version PR.
+#
+# The promotion between them is the git-flow release branch: once the version
+# PR has merged into `develop`, cut `release/*` from `develop` and merge it
+# into `main`, which triggers the publish job.
+#
+# Each changesets/action invocation is given only ONE of `version:` /
+# `publish:` — that is what constrains it to a single behaviour per branch.
+# Giving it both (the previous configuration) is why a push to `main` opened a
+# version PR against `main`, bypassing `develop` entirely.
+
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 concurrency:
@@ -16,8 +37,9 @@ permissions:
   id-token: write
 
 jobs:
-  release:
-    name: Release
+  version:
+    name: Version packages (develop)
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -48,14 +70,52 @@ jobs:
       - name: Run tests
         run: pnpm test
 
-      - name: Create Release Pull Request or Publish
-        id: changesets
+      - name: Create version pull request
+        uses: changesets/action@v1
+        with:
+          version: pnpm version-packages
+          commit: 'chore: version packages'
+          title: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish packages (main)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Publish to npm
         uses: changesets/action@v1
         with:
           publish: pnpm release
-          version: pnpm version-packages
-          commit: 'chore: release packages'
-          title: 'chore: release packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

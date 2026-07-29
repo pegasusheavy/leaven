@@ -33,6 +33,14 @@ export * from '@leaven-graphql/errors';
 export * from '@leaven-graphql/plugins';
 export * from '@leaven-graphql/playground';
 
+// `ContextFactory` is exported by two packages with different shapes:
+// `@leaven-graphql/context` builds a context from an input (`<TInput,
+// TContext>`), while `@leaven-graphql/http` maps a request to a context
+// (`<TContext>`). The star exports above leave the name ambiguous (TS2308), so
+// resolve it explicitly — the dedicated context package keeps the bare name.
+export type { ContextFactory } from '@leaven-graphql/context';
+export type { ContextFactory as HttpContextFactory } from '@leaven-graphql/http';
+
 // Named exports for common usage patterns
 export {
   // Core

@@ -143,6 +143,47 @@ if (cause instanceof MyDbError) { /* ... */ }
 as `RateLimitError.retryAfter` or `ValidationError.validationErrors` survives
 the conversion and reaches the formatted response.
 
+### `formatExecutionError`: the last point where `originalError` still exists
+
+`ExecutorConfig.formatExecutionError` is the executor-level hook a transport uses
+to serialize an *execution* error while the graphql-js `GraphQLError` is still
+intact. The default is `error.toJSON()`, which emits only
+`{ message, locations, path, extensions }` and drops `originalError`.
+
+graphql-js sets `extensions = extensions ?? originalError?.extensions ?? {}`, so
+a `LeavenError` survives `toJSON()` with its `code`. A framework exception with
+no `extensions` of its own — a NestJS `HttpException` — does not: it arrives with
+`extensions: {}` and is indistinguishable from a crash. Mapping it to an
+`ErrorCode` is only possible before `toJSON()` runs:
+
+```typescript
+const executor = new LeavenExecutor({
+  schema,
+  formatExecutionError: (error) => {
+    const cause = error.originalError;
+    if (cause instanceof HttpException) {
+      return {
+        message: cause.message,
+        path: error.path,
+        locations: error.locations,
+        extensions: { ...error.extensions, code: codeForStatus(cause.getStatus()) },
+      };
+    }
+    return error.toJSON();
+  },
+});
+```
+
+Scope: the errors of an execution result and of both subscription paths. It is
+deliberately *not* applied to parse, validation or complexity rejections — those
+are synthesised by Leaven, never carry a framework `originalError`, and already
+carry an `ErrorCode` — nor to an error thrown out of the executor itself, which
+`formatCaughtError` routes through this package.
+
+Distinct from a transport's own `formatError` (e.g.
+`LeavenModuleOptions.formatError`), which is a final, response-level pass over an
+already-serialized `GraphQLFormattedError`.
+
 ## Error Handling in Resolvers
 
 ```typescript
