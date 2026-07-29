@@ -37,7 +37,7 @@
     "bun",
     "schema"
   ],
-  "author": "Pegasus Heavy Industries LLC",
+  "author": "Joseph Quinn",
   "license": "Apache-2.0",
   "dependencies": {
     "graphql": "^16.8.0"

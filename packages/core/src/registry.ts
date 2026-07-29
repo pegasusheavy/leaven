@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/core - Operation registry for persisted queries
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -50,7 +50,12 @@ export interface RegisteredOperation {
  * Registry for persisted/approved GraphQL operations
  */
 export class OperationRegistry {
+  /** Minimum prefix length accepted by {@link findByHashPrefix}. */
+  private static readonly MIN_HASH_PREFIX_LENGTH = 8;
+
   private readonly operations: Map<string, RegisteredOperation>;
+  /** Exact-match index from query hash to operation for O(1) lookups. */
+  private readonly hashIndex: Map<string, RegisteredOperation>;
   private readonly schema: GraphQLSchema;
   private readonly shouldCompile: boolean;
   private readonly compilerOptions?: CompilerOptions;
@@ -58,6 +63,7 @@ export class OperationRegistry {
 
   constructor(config: OperationRegistryConfig) {
     this.operations = new Map();
+    this.hashIndex = new Map();
     this.schema = config.schema;
     this.shouldCompile = config.compile ?? false;
     this.compilerOptions = config.compilerOptions;
@@ -134,6 +140,7 @@ export class OperationRegistry {
     };
 
     this.operations.set(id, operation);
+    this.hashIndex.set(hash, operation);
     return operation;
   }
 
@@ -154,15 +161,44 @@ export class OperationRegistry {
   }
 
   /**
-   * Get an operation by hash
+   * Get an operation by its full query hash.
+   *
+   * Performs an exact match only — partial hashes and empty strings return
+   * `null`. Use {@link findByHashPrefix} for explicit prefix lookups.
    */
   public getByHash(hash: string): RegisteredOperation | null {
+    return this.hashIndex.get(hash) ?? null;
+  }
+
+  /**
+   * Find an operation by a prefix of its query hash.
+   *
+   * Intended for tooling/diagnostics, not as a lookup path for executing
+   * operations — use {@link getByHash} with the full hash for that.
+   *
+   * @param prefix - Hash prefix, at least 8 characters long.
+   * @returns The single matching operation, or `null` when no operation
+   *   matches or the prefix is ambiguous (matches more than one operation).
+   * @throws Error when `prefix` is shorter than 8 characters.
+   */
+  public findByHashPrefix(prefix: string): RegisteredOperation | null {
+    if (prefix.length < OperationRegistry.MIN_HASH_PREFIX_LENGTH) {
+      throw new Error(
+        `Hash prefix must be at least ${OperationRegistry.MIN_HASH_PREFIX_LENGTH} characters, got ${prefix.length}`
+      );
+    }
+
+    let match: RegisteredOperation | null = null;
     for (const op of this.operations.values()) {
-      if (op.hash === hash || op.hash.startsWith(hash)) {
-        return op;
+      if (op.hash.startsWith(prefix)) {
+        if (match !== null) {
+          // Ambiguous prefix: more than one operation matches.
+          return null;
+        }
+        match = op;
       }
     }
-    return null;
+    return match;
   }
 
   /**
@@ -173,17 +209,38 @@ export class OperationRegistry {
   }
 
   /**
-   * Check if a query hash is registered
+   * Check if a query hash is registered.
+   *
+   * Exact match only — partial hashes and empty strings return `false`.
    */
   public hasHash(hash: string): boolean {
-    return this.getByHash(hash) !== null;
+    return this.hashIndex.has(hash);
   }
 
   /**
    * Unregister an operation
    */
   public unregister(id: string): boolean {
-    return this.operations.delete(id);
+    const operation = this.operations.get(id);
+    if (!operation) {
+      return false;
+    }
+
+    this.operations.delete(id);
+
+    // Keep the hash index in sync. Another operation may share the same
+    // hash (same query registered under a different ID), so re-index it.
+    if (this.hashIndex.get(operation.hash) === operation) {
+      this.hashIndex.delete(operation.hash);
+      for (const op of this.operations.values()) {
+        if (op.hash === operation.hash) {
+          this.hashIndex.set(op.hash, op);
+          break;
+        }
+      }
+    }
+
+    return true;
   }
 
   /**
@@ -191,6 +248,7 @@ export class OperationRegistry {
    */
   public clear(): void {
     this.operations.clear();
+    this.hashIndex.clear();
   }
 
   /**
@@ -232,10 +290,24 @@ export class OperationRegistry {
   }
 
   /**
-   * Import operations from a serialized registry
+   * Import operations from a serialized registry.
+   *
+   * Entries that fail to register (parse errors, schema validation
+   * failures, ID conflicts) are skipped. Pass `onError` to observe each
+   * failure — without it, failures are silently dropped and only the
+   * returned count reflects them.
+   *
+   * @param data - Serialized registry, as produced by {@link export}.
+   * @param onError - Optional callback invoked for each entry that fails
+   *   to import, receiving the entry (including its `id`) and the error.
+   * @returns The number of operations successfully imported.
    */
   public import(
-    data: Record<string, { query: string; name?: string | null; type?: OperationType }>
+    data: Record<string, { query: string; name?: string | null; type?: OperationType }>,
+    onError?: (
+      entry: { id: string; query: string; name?: string | null; type?: OperationType },
+      error: Error
+    ) => void
   ): number {
     let imported = 0;
 
@@ -243,8 +315,12 @@ export class OperationRegistry {
       try {
         this.register(op.query, { id, name: op.name ?? undefined });
         imported++;
-      } catch {
-        // Skip invalid operations
+      } catch (error) {
+        // Skip invalid operations, surfacing the failure if requested
+        onError?.(
+          { id, ...op },
+          error instanceof Error ? error : new Error(String(error))
+        );
       }
     }
 

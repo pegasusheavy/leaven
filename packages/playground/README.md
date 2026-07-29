@@ -1,6 +1,6 @@
 # @leaven-graphql/playground
 
-GraphQL Playground and GraphiQL integration for Leaven.
+GraphQL Playground and GraphiQL renderers for Leaven.
 
 ## Installation
 
@@ -24,80 +24,83 @@ server.start();
 // Open http://localhost:4000/graphql in your browser
 ```
 
-## Features
+## In-server IDE
 
-### GraphQL Playground
+`playground` on `HandlerConfig` / `ServerConfig` is a **boolean**, not a config
+object. When it is `true`, the handler renders **GraphiQL** — with default
+options and the Explorer plugin enabled — and serves it at `config.path`
+(default `/graphql`), the same path the GraphQL endpoint uses:
 
-Feature-rich GraphQL IDE with:
+```typescript
+const server = createServer({
+  schema,
+  playground: true,
+  path: '/api/graphql', // the IDE is served here too, pointed at this endpoint
+});
+```
 
-- Syntax highlighting and auto-complete
-- Schema explorer and documentation
-- Query history
-- Multiple tabs
-- Headers editor
-- Variables panel
-- Customizable themes
+The IDE is returned only for a request that is all of: `GET`, `Accept:
+text/html`, and carrying no `query` search parameter — so ordinary GET queries
+and `POST` operations are unaffected.
 
-### Configuration
+There is nothing else to configure through this option. Passing an object
+(`playground: { endpoint, settings, tabs }`) does not type-check, and at runtime
+an object is merely truthy: every field would be ignored. For a configured IDE,
+mount a handler on `routes` instead — see below.
+
+`renderPlayground` (GraphQL Playground, as opposed to GraphiQL) is **not**
+reachable through `createServer` or `createHandler` at all. Use
+`createPlaygroundHandler` directly if you want it.
+
+## Standalone Handler
+
+Mount a fully configured IDE on its own route. `createPlaygroundHandler` renders
+GraphQL Playground; `createGraphiQLHandler` renders GraphiQL. Both take a
+**required** config whose `endpoint` is also required.
 
 ```typescript
 import { createServer } from '@leaven-graphql/http';
+import { createPlaygroundHandler } from '@leaven-graphql/playground';
 
 const server = createServer({
   schema,
-  playground: {
-    endpoint: '/graphql',
-    subscriptionEndpoint: 'ws://localhost:4000/graphql',
-
-    headers: {
-      'X-Custom-Header': 'value',
-    },
-
-    settings: {
-      'editor.theme': 'dark',
-      'editor.fontSize': 14,
-      'editor.fontFamily': '"Fira Code", monospace',
-      'editor.cursorShape': 'line',
-      'request.credentials': 'include',
-      'schema.polling.enable': true,
-      'schema.polling.interval': 2000,
-      'tracing.hideTracingResponse': false,
-    },
-
-    tabs: [
-      {
-        name: 'Hello Query',
-        query: `query HelloWorld {
+  playground: false, // disable the built-in GraphiQL at /graphql
+  routes: {
+    '/playground': createPlaygroundHandler({
+      endpoint: '/graphql',
+      subscriptionEndpoint: 'ws://localhost:4000/graphql',
+      title: 'My API',
+      theme: 'dark',
+      defaultQuery: `query HelloWorld {
   hello
 }`,
-        variables: '{}',
+      defaultVariables: '{}',
+      headers: {
+        'X-Custom-Header': 'value',
       },
-      {
-        name: 'User Query',
-        query: `query GetUser($id: ID!) {
-  user(id: $id) {
-    id
-    name
-    email
-  }
-}`,
-        variables: '{"id": "1"}',
+      settings: {
+        'editor.theme': 'dark',
+        'editor.fontSize': 14,
+        'editor.fontFamily': '"Fira Code", monospace',
+        'request.credentials': 'include',
+        'tracing.hideTracingResponse': false,
       },
-    ],
+    }),
   },
 });
 ```
 
-### Standalone Handler
+Handlers respond `200` with `Content-Type: text/html; charset=utf-8` and
+`Cache-Control: no-store` to `GET`, and `405` to every other method. The HTML is
+rendered once, when the handler is created.
+
+They are plain `(request: Request) => Response` functions, so they work with
+`Bun.serve` directly:
 
 ```typescript
-import { createPlaygroundHandler, renderPlayground } from '@leaven-graphql/playground';
+import { createPlaygroundHandler } from '@leaven-graphql/playground';
 
-// Create a handler
-const playgroundHandler = createPlaygroundHandler({
-  endpoint: '/graphql',
-  settings: { 'editor.theme': 'dark' },
-});
+const playgroundHandler = createPlaygroundHandler({ endpoint: '/graphql' });
 
 Bun.serve({
   port: 4000,
@@ -115,15 +118,18 @@ Bun.serve({
     return new Response('Not Found', { status: 404 });
   },
 });
-
-// Or just render the HTML
-const html = renderPlayground({
-  endpoint: '/graphql',
-  settings: { 'editor.theme': 'dark' },
-});
 ```
 
-### GraphiQL Alternative
+Or render the HTML yourself:
+
+```typescript
+import { renderPlayground, renderGraphiQL } from '@leaven-graphql/playground';
+
+const playgroundHtml = renderPlayground({ endpoint: '/graphql' });
+const graphiqlHtml = renderGraphiQL({ endpoint: '/graphql' });
+```
+
+### GraphiQL
 
 ```typescript
 import { createGraphiQLHandler, renderGraphiQL } from '@leaven-graphql/playground';
@@ -134,7 +140,10 @@ const server = createServer({
   routes: {
     '/graphiql': createGraphiQLHandler({
       endpoint: '/graphql',
-      headerEditorEnabled: true,
+      subscriptionEndpoint: 'ws://localhost:4000/graphql',
+      title: 'My API',
+      version: '3.0.10',
+      explorer: true,
     }),
   },
 });
@@ -148,9 +157,12 @@ const html = renderGraphiQL({
 });
 ```
 
-### Security
+GraphiQL has no `settings` object and no theme option — those belong to
+GraphQL Playground.
 
-**Important:** Disable playground in production!
+## Security
+
+**Important:** Disable the IDE in production.
 
 ```typescript
 const server = createServer({
@@ -159,70 +171,111 @@ const server = createServer({
   introspection: process.env.NODE_ENV !== 'production',
 });
 
-// Or use environment variable
+// Or use an environment variable
 const server = createServer({
   schema,
   playground: process.env.ENABLE_PLAYGROUND === 'true',
 });
 ```
 
+Every value interpolated into the rendered HTML is escaped — `title` and
+`version` as HTML, and all script-context values (`endpoint`, queries,
+variables, headers, settings) as script-safe JSON — so a configured value cannot
+break out of its attribute or close the inline `<script>` block. Configuration
+still comes from your own code, not from request input; do not feed
+user-supplied data into these renderers.
+
 ## API Reference
 
 ### renderPlayground
 
+Renders GraphQL Playground. `config` is required, as is `config.endpoint`.
+
 ```typescript
-function renderPlayground(config?: PlaygroundConfig): string;
+function renderPlayground(config: PlaygroundConfig): string;
+
+type PlaygroundTheme = 'dark' | 'light';
 
 interface PlaygroundConfig {
-  endpoint?: string;
+  /** GraphQL endpoint URL */
+  endpoint: string;
+  /** Subscription WebSocket endpoint */
   subscriptionEndpoint?: string;
+  /** Page title (default: 'Leaven GraphQL Playground') */
+  title?: string;
+  /** Theme (default: 'dark') */
+  theme?: PlaygroundTheme;
+  /** Default query */
+  defaultQuery?: string;
+  /** Default variables */
+  defaultVariables?: string;
+  /** Default headers */
   headers?: Record<string, string>;
-  settings?: PlaygroundSettings;
-  tabs?: PlaygroundTab[];
-}
-
-interface PlaygroundTab {
-  name: string;
-  query: string;
-  variables?: string;
-  headers?: Record<string, string>;
+  /** Editor settings */
+  settings?: {
+    'editor.theme'?: PlaygroundTheme;
+    'editor.fontSize'?: number;
+    'editor.fontFamily'?: string;
+    'request.credentials'?: 'include' | 'omit' | 'same-origin';
+    'tracing.hideTracingResponse'?: boolean;
+  };
 }
 ```
+
+`defaultQuery`, `defaultVariables`, and `headers` populate a single initial tab.
+There is no `tabs` option and no `PlaygroundTab` type.
 
 ### renderGraphiQL
 
+Renders GraphiQL. `config` is required, as is `config.endpoint`.
+
 ```typescript
-function renderGraphiQL(config?: GraphiQLConfig): string;
+function renderGraphiQL(config: GraphiQLConfig): string;
 
 interface GraphiQLConfig {
-  endpoint?: string;
+  /** GraphQL endpoint URL */
+  endpoint: string;
+  /** Subscription WebSocket endpoint */
+  subscriptionEndpoint?: string;
+  /** Page title (default: 'Leaven GraphiQL') */
+  title?: string;
+  /** Default query (default: a commented welcome message) */
   defaultQuery?: string;
-  headerEditorEnabled?: boolean;
-  shouldPersistHeaders?: boolean;
+  /** Default variables */
+  defaultVariables?: string;
+  /** Default headers, passed to the fetcher */
+  headers?: Record<string, string>;
+  /** GraphiQL version loaded from unpkg (default: '3.0.10') */
+  version?: string;
+  /** Enable the Explorer plugin (default: true) */
+  explorer?: boolean;
 }
 ```
+
+There are no `headerEditorEnabled` or `shouldPersistHeaders` options.
 
 ### Handlers
 
 ```typescript
-function createPlaygroundHandler(config?: PlaygroundConfig): RequestHandler;
-function createGraphiQLHandler(config?: GraphiQLConfig): RequestHandler;
+function createPlaygroundHandler(config: PlaygroundConfig): RequestHandler;
+function createGraphiQLHandler(config: GraphiQLConfig): RequestHandler;
 
 type RequestHandler = (request: Request) => Response;
 ```
 
 ### Playground Settings
 
+Supplied values are merged over the defaults below; `editor.theme` defaults to
+the `theme` option. Keys outside this table are not part of `PlaygroundConfig`.
+
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `editor.theme` | `'dark' \| 'light'` | `'dark'` | Editor theme |
+| `editor.theme` | `'dark' \| 'light'` | `theme` (`'dark'`) | Editor theme |
 | `editor.fontSize` | `number` | `14` | Font size |
-| `editor.fontFamily` | `string` | `monospace` | Font family |
-| `editor.cursorShape` | `string` | `'line'` | Cursor style |
-| `request.credentials` | `string` | `'omit'` | Fetch credentials |
-| `schema.polling.enable` | `boolean` | `false` | Auto-refresh schema |
-| `schema.polling.interval` | `number` | `2000` | Polling interval (ms) |
+| `editor.fontFamily` | `string` | `'Source Code Pro', 'Consolas', 'Monaco', monospace` | Font family |
+| `request.credentials` | `'include' \| 'omit' \| 'same-origin'` | `'include'` | Fetch credentials |
+| `tracing.hideTracingResponse` | `boolean` | unset | Hide tracing extensions |
 
 ## License
 
-Apache 2.0 - Pegasus Heavy Industries LLC
+Apache 2.0 - Joseph Quinn

@@ -1,7 +1,7 @@
 {
   "name": "@leaven-graphql/leaven",
   "version": "0.1.0",
-  "description": "A high-performance GraphQL library for the Bun runtime",
+  "description": "Meta-package for Leaven, a high-performance GraphQL library for the Bun runtime. Re-exports the runtime modules (core, http, ws, context, errors, plugins, playground) and selected schema helpers; the NestJS integration ships separately as @leaven-graphql/nestjs.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -9,38 +9,6 @@
     ".": {
       "import": "./src/index.ts",
       "types": "./src/index.ts"
-    },
-    "./core": {
-      "import": "@leaven-graphql/core",
-      "types": "@leaven-graphql/core"
-    },
-    "./schema": {
-      "import": "@leaven-graphql/schema",
-      "types": "@leaven-graphql/schema"
-    },
-    "./http": {
-      "import": "@leaven-graphql/http",
-      "types": "@leaven-graphql/http"
-    },
-    "./ws": {
-      "import": "@leaven-graphql/ws",
-      "types": "@leaven-graphql/ws"
-    },
-    "./context": {
-      "import": "@leaven-graphql/context",
-      "types": "@leaven-graphql/context"
-    },
-    "./errors": {
-      "import": "@leaven-graphql/errors",
-      "types": "@leaven-graphql/errors"
-    },
-    "./plugins": {
-      "import": "@leaven-graphql/plugins",
-      "types": "@leaven-graphql/plugins"
-    },
-    "./playground": {
-      "import": "@leaven-graphql/playground",
-      "types": "@leaven-graphql/playground"
     }
   },
   "publishConfig": {
@@ -51,38 +19,6 @@
       ".": {
         "import": "./dist/index.js",
         "types": "./dist/index.d.ts"
-      },
-      "./core": {
-        "import": "@leaven-graphql/core",
-        "types": "@leaven-graphql/core"
-      },
-      "./schema": {
-        "import": "@leaven-graphql/schema",
-        "types": "@leaven-graphql/schema"
-      },
-      "./http": {
-        "import": "@leaven-graphql/http",
-        "types": "@leaven-graphql/http"
-      },
-      "./ws": {
-        "import": "@leaven-graphql/ws",
-        "types": "@leaven-graphql/ws"
-      },
-      "./context": {
-        "import": "@leaven-graphql/context",
-        "types": "@leaven-graphql/context"
-      },
-      "./errors": {
-        "import": "@leaven-graphql/errors",
-        "types": "@leaven-graphql/errors"
-      },
-      "./plugins": {
-        "import": "@leaven-graphql/plugins",
-        "types": "@leaven-graphql/plugins"
-      },
-      "./playground": {
-        "import": "@leaven-graphql/playground",
-        "types": "@leaven-graphql/playground"
       }
     }
   },
@@ -105,7 +41,7 @@
     "apollo",
     "mercurius"
   ],
-  "author": "Pegasus Heavy Industries LLC",
+  "author": "Joseph Quinn",
   "license": "Apache-2.0",
   "dependencies": {
     "@leaven-graphql/context": "workspace:*",

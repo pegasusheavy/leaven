@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/schema - Schema builder
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -44,6 +44,12 @@ export interface FieldDefinition {
   args?: Record<string, { type: string; description?: string; defaultValue?: unknown }>;
   /** Field resolver */
   resolve?: (parent: unknown, args: unknown, context: unknown, info: unknown) => unknown;
+  /**
+   * Subscription subscribe function. Must return an `AsyncIterable` of event
+   * payloads; each payload is then passed to `resolve` (or the default
+   * resolver) as the parent value. Only meaningful on Subscription fields.
+   */
+  subscribe?: (parent: unknown, args: unknown, context: unknown, info: unknown) => unknown;
 }
 
 /**
@@ -94,6 +100,15 @@ export class SchemaBuilder {
   private readonly enums: Map<string, GraphQLEnumType>;
   private readonly interfaces: Map<string, GraphQLInterfaceType>;
   private readonly unions: Map<string, GraphQLUnionType>;
+  private readonly typeFields: Map<string, Record<string, FieldDefinition>>;
+
+  // graphql-js memoises a type's lazy `fields` thunk the first time it is
+  // read, so a type instance created before `build()` can never pick up a
+  // later `applyResolvers` call. The definitions are kept so every `build()`
+  // can construct fresh instances instead.
+  private readonly typeDefinitions: Map<string, TypeDefinition>;
+  private readonly interfaceConfigs: Map<string, InterfaceConfig>;
+  private readonly unionConfigs: Map<string, UnionConfig>;
 
   private queryFields: Record<string, FieldDefinition>;
   private mutationFields: Record<string, FieldDefinition>;
@@ -108,6 +123,11 @@ export class SchemaBuilder {
     this.enums = new Map();
     this.interfaces = new Map();
     this.unions = new Map();
+    this.typeFields = new Map();
+
+    this.typeDefinitions = new Map();
+    this.interfaceConfigs = new Map();
+    this.unionConfigs = new Map();
 
     this.queryFields = {};
     this.mutationFields = {};
@@ -164,14 +184,8 @@ export class SchemaBuilder {
    * Add an interface type
    */
   public addInterface(config: InterfaceConfig): this {
-    const interfaceType = new GraphQLInterfaceType({
-      name: config.name,
-      description: config.description,
-      fields: () => this.buildFields(config.fields),
-      resolveType: config.resolveType as undefined,
-    });
-
-    this.interfaces.set(config.name, interfaceType);
+    this.interfaceConfigs.set(config.name, config);
+    this.interfaces.set(config.name, this.createInterfaceType(config));
     return this;
   }
 
@@ -179,7 +193,38 @@ export class SchemaBuilder {
    * Add a union type
    */
   public addUnion(config: UnionConfig): this {
-    const union = new GraphQLUnionType({
+    this.unionConfigs.set(config.name, config);
+    this.unions.set(config.name, this.createUnionType(config));
+    return this;
+  }
+
+  /**
+   * Add an object type
+   */
+  public addType(definition: TypeDefinition): this {
+    this.typeFields.set(definition.name, { ...definition.fields });
+    this.typeDefinitions.set(definition.name, definition);
+    this.types.set(definition.name, this.createObjectType(definition));
+    return this;
+  }
+
+  /**
+   * Construct an interface type from its stored configuration
+   */
+  private createInterfaceType(config: InterfaceConfig): GraphQLInterfaceType {
+    return new GraphQLInterfaceType({
+      name: config.name,
+      description: config.description,
+      fields: () => this.buildFields(config.fields),
+      resolveType: config.resolveType as undefined,
+    });
+  }
+
+  /**
+   * Construct a union type from its stored configuration
+   */
+  private createUnionType(config: UnionConfig): GraphQLUnionType {
+    return new GraphQLUnionType({
       name: config.name,
       description: config.description,
       types: () =>
@@ -192,19 +237,22 @@ export class SchemaBuilder {
         }),
       resolveType: config.resolveType as undefined,
     });
-
-    this.unions.set(config.name, union);
-    return this;
   }
 
   /**
-   * Add an object type
+   * Construct an object type from its stored definition.
+   *
+   * The field thunk reads {@link typeFields} rather than the definition passed
+   * in, so resolvers applied after the type was registered are picked up.
    */
-  public addType(definition: TypeDefinition): this {
-    const type = new GraphQLObjectType({
+  private createObjectType(definition: TypeDefinition): GraphQLObjectType {
+    return new GraphQLObjectType({
       name: definition.name,
       description: definition.description,
-      fields: () => this.buildFields(definition.fields),
+      fields: () =>
+        this.buildFields(
+          this.typeFields.get(definition.name) ?? definition.fields
+        ),
       interfaces: definition.interfaces
         ? () =>
             definition.interfaces!.map((name) => {
@@ -216,9 +264,6 @@ export class SchemaBuilder {
             })
         : undefined,
     });
-
-    this.types.set(definition.name, type);
-    return this;
   }
 
   /**
@@ -347,6 +392,7 @@ export class SchemaBuilder {
         deprecationReason: field.deprecationReason,
         args: Object.keys(args).length > 0 ? args : undefined,
         resolve: field.resolve,
+        subscribe: field.subscribe,
       };
     }
 
@@ -373,42 +419,55 @@ export class SchemaBuilder {
   }
 
   /**
-   * Apply resolvers to the schema
+   * Apply resolvers to the schema.
+   *
+   * Handles the root `Query`, `Mutation` and `Subscription` types as well as
+   * any object type previously registered with {@link addType}. A bare
+   * function under `Subscription` is applied as the field's `subscribe`
+   * function (graphql-js requires `subscribe` to produce the event stream);
+   * the `{ resolve, subscribe }` object form is supported for every type.
+   *
+   * @throws Error if a resolver references a type or field that has not been
+   * defined, so typos fail at build time instead of silently resolving to
+   * `null` at runtime. Define types and fields before applying resolvers.
    */
   public applyResolvers(resolvers: Resolvers): this {
-    // Apply query resolvers
-    if (resolvers.Query) {
-      for (const [fieldName, resolver] of Object.entries(resolvers.Query)) {
-        if (this.queryFields[fieldName]) {
-          this.queryFields[fieldName] = {
-            ...this.queryFields[fieldName],
-            resolve: resolver as FieldDefinition['resolve'],
-          };
-        }
-      }
-    }
+    for (const [typeName, typeResolvers] of Object.entries(resolvers)) {
+      const fields = this.getFieldDefinitions(typeName);
 
-    // Apply mutation resolvers
-    if (resolvers.Mutation) {
-      for (const [fieldName, resolver] of Object.entries(resolvers.Mutation)) {
-        if (this.mutationFields[fieldName]) {
-          this.mutationFields[fieldName] = {
-            ...this.mutationFields[fieldName],
-            resolve: resolver as FieldDefinition['resolve'],
-          };
-        }
+      if (!fields) {
+        throw new Error(
+          `applyResolvers: unknown type "${typeName}". Add the type before applying its resolvers.`
+        );
       }
-    }
 
-    // Apply subscription resolvers
-    if (resolvers.Subscription) {
-      for (const [fieldName, resolver] of Object.entries(resolvers.Subscription)) {
-        if (this.subscriptionFields[fieldName]) {
-          this.subscriptionFields[fieldName] = {
-            ...this.subscriptionFields[fieldName],
-            resolve: resolver as FieldDefinition['resolve'],
-          };
+      for (const [fieldName, resolver] of Object.entries(typeResolvers)) {
+        const existing = fields[fieldName];
+
+        if (!existing) {
+          throw new Error(
+            `applyResolvers: field "${typeName}.${fieldName}" is not defined`
+          );
         }
+
+        const updated: FieldDefinition = { ...existing };
+
+        if (typeof resolver === 'function') {
+          if (typeName === 'Subscription') {
+            updated.subscribe = resolver as FieldDefinition['subscribe'];
+          } else {
+            updated.resolve = resolver as FieldDefinition['resolve'];
+          }
+        } else {
+          if (resolver.resolve) {
+            updated.resolve = resolver.resolve as FieldDefinition['resolve'];
+          }
+          if (resolver.subscribe) {
+            updated.subscribe = resolver.subscribe as FieldDefinition['subscribe'];
+          }
+        }
+
+        fields[fieldName] = updated;
       }
     }
 
@@ -416,9 +475,55 @@ export class SchemaBuilder {
   }
 
   /**
-   * Build the GraphQL schema
+   * Look up the mutable field definition record for a type name
+   */
+  private getFieldDefinitions(
+    typeName: string
+  ): Record<string, FieldDefinition> | undefined {
+    switch (typeName) {
+      case 'Query':
+        return this.queryFields;
+      case 'Mutation':
+        return this.mutationFields;
+      case 'Subscription':
+        return this.subscriptionFields;
+      default:
+        return this.typeFields.get(typeName);
+    }
+  }
+
+  /**
+   * Recreate every type whose fields can still change.
+   *
+   * graphql-js memoises a type's `fields` thunk on first access, so the
+   * instances used by a previous `build()` are frozen. Interfaces are rebuilt
+   * first because object types resolve theirs lazily, and unions last because
+   * they resolve their members from {@link types}.
+   */
+  private rebuildMutableTypes(): void {
+    for (const [name, config] of this.interfaceConfigs) {
+      this.interfaces.set(name, this.createInterfaceType(config));
+    }
+
+    for (const [name, definition] of this.typeDefinitions) {
+      this.types.set(name, this.createObjectType(definition));
+    }
+
+    for (const [name, config] of this.unionConfigs) {
+      this.unions.set(name, this.createUnionType(config));
+    }
+  }
+
+  /**
+   * Build the GraphQL schema.
+   *
+   * Safe to call more than once: each call produces a fresh schema that
+   * reflects every type, field and resolver registered so far, including
+   * {@link applyResolvers} calls made after an earlier build.
    */
   public build(): GraphQLSchema {
+    this.rebuildMutableTypes();
+
     let query: GraphQLObjectType | undefined;
     let mutation: GraphQLObjectType | undefined;
     let subscription: GraphQLObjectType | undefined;

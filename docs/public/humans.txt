@@ -1,7 +1,7 @@
 /* TEAM */
 
-Developer: Pegasus Heavy Industries LLC
-Site: https://pegasusheavyindustries.com
+Developer: Joseph Quinn
+Site: https://github.com/quinnjr
 Location: United States
 
 /* THANKS */

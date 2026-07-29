@@ -1,7 +1,8 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { CodeBlockComponent } from '../components/code-block';
+import { SeoService } from '../services/seo.service';
 
 @Component({
   selector: 'app-executor',
@@ -13,7 +14,7 @@ import { CodeBlockComponent } from '../components/code-block';
       <nav class="flex items-center gap-2 text-sm text-zinc-500 mb-8">
         <a routerLink="/" class="hover:text-white transition-colors">Home</a>
         <span>/</span>
-        <a routerLink="/docs/quick-start" class="hover:text-white transition-colors">Docs</a>
+        <a routerLink="/quick-start" class="hover:text-white transition-colors">Docs</a>
         <span>/</span>
         <span class="text-zinc-300">Executor</span>
       </nav>
@@ -79,7 +80,7 @@ import { CodeBlockComponent } from '../components/code-block';
 
       <!-- Navigation -->
       <nav class="flex items-center justify-between pt-8 border-t border-zinc-800">
-        <a routerLink="/docs/installation" class="group flex items-center gap-2 text-zinc-400 hover:text-white transition-colors">
+        <a routerLink="/installation" class="group flex items-center gap-2 text-zinc-400 hover:text-white transition-colors">
           <svg class="w-5 h-5 group-hover:-translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17l-5-5m0 0l5-5m-5 5h12"/>
           </svg>
@@ -88,7 +89,7 @@ import { CodeBlockComponent } from '../components/code-block';
             <span class="font-medium">Installation</span>
           </div>
         </a>
-        <a routerLink="/docs/schema" class="group flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-right">
+        <a routerLink="/schema" class="group flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-right">
           <div>
             <span class="text-xs text-zinc-500 block">Next</span>
             <span class="font-medium">Schema Building</span>
@@ -101,7 +102,19 @@ import { CodeBlockComponent } from '../components/code-block';
     </article>
   `,
 })
-export class ExecutorComponent {
+export class ExecutorComponent implements OnInit {
+  constructor(private seoService: SeoService) {}
+
+  ngOnInit(): void {
+    this.seoService.updatePageSEO({
+      title: 'Executor',
+      description: 'The LeavenExecutor handles parsing, validation, compilation, caching, and execution of GraphQL operations on Bun.',
+      keywords: ['GraphQL executor', 'query execution', 'document caching', 'execution hooks', 'Leaven'],
+      canonical: '/executor',
+      ogType: 'article'
+    });
+  }
+
   basicUsage = `import { LeavenExecutor } from '@leaven-graphql/core';
 import { schema } from './schema';
 
@@ -119,13 +132,18 @@ console.log(result.response.data);
 // { hello: "Hello, world!" }`;
 
   configCode = `interface ExecutorConfig {
-  schema: GraphQLSchema;      // Your GraphQL schema
-  rootValue?: unknown;        // Root resolver value
-  cache?: DocumentCacheConfig | boolean;
-  compilerOptions?: CompilerOptions;
-  maxComplexity?: number;     // Query complexity limit
-  hooks?: ExecutionHooks;     // Lifecycle hooks
-  metrics?: boolean;          // Enable execution metrics
+  schema: GraphQLSchema;              // Your GraphQL schema
+  rootValue?: unknown;                // Root resolver value
+  cache?: DocumentCacheConfig         // Configure the in-memory cache,
+    | boolean                         // enable/disable the default cache,
+    | IDocumentCache;                 // or plug in a custom cache (e.g. Redis)
+  parseOptions?: ParseOptions;        // Parser options
+  compilerOptions?: CompilerOptions;  // Enables query compilation
+  introspection?: boolean;            // Enable introspection queries (default: true)
+  maxDepth?: number;                  // Query depth limit
+  maxComplexity?: number;             // Query complexity limit
+  hooks?: ExecutionHooks;             // Lifecycle hooks
+  metrics?: boolean;                  // Enable execution metrics
 }`;
 
   cachingCode = `const executor = new LeavenExecutor({
@@ -136,10 +154,10 @@ console.log(result.response.data);
   },
 });
 
-// Check cache stats
-const stats = executor.getCacheStats();
+// Check cache stats (async - custom caches may be remote)
+const stats = await executor.getCacheStats();
 console.log(stats);
-// { document: { size: 42, hits: 156, ... }, compiled: { size: 12 } }`;
+// { document: { size: 42, hits: 156, ... }, compiled: { size: 12, maxSize: 1000 } }`;
 
   hooksCode = `const executor = new LeavenExecutor({
   schema,
@@ -175,7 +193,11 @@ console.log(result.metrics);
 // {
 //   timing: { parseTime: 0.5, validationTime: 1.2, executionTime: 3.8, totalTime: 5.5 },
 //   documentCached: true,
+//   validationCached: true,
 //   queryCached: false,
-//   resolverCount: 5
-// }`;
+//   complexity: 12
+// }
+//
+// Note: ExecutionMetrics also declares resolverCount, but the executor does
+// not track it and omits the field rather than reporting a wrong count.`;
 }

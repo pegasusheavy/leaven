@@ -144,7 +144,7 @@ All source files should include the standard header:
 /**
  * @leaven-graphql/package-name - Brief description
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 ```
@@ -202,7 +202,7 @@ When creating or modifying packages:
 
 ## Questions?
 
-- Open a [Discussion](https://github.com/pegasusheavy/leaven/discussions)
-- Check existing [Issues](https://github.com/pegasusheavy/leaven/issues)
+- Open a [Discussion](https://github.com/quinnjr/leaven/discussions)
+- Check existing [Issues](https://github.com/quinnjr/leaven/issues)
 
 Thank you for contributing! 🎉

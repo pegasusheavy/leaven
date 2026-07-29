@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/context - Request context tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -36,6 +36,20 @@ describe('RequestContext', () => {
       );
 
       expect(context.requestId).toBe('custom-id');
+    });
+
+    test('should generate unique request IDs across many contexts', () => {
+      const ids = new Set<string>();
+      for (let i = 0; i < 1000; i++) {
+        const context = new RequestContext({
+          method: 'GET',
+          url: 'http://localhost/graphql',
+          headers: {},
+        });
+        ids.add(context.requestId);
+      }
+
+      expect(ids.size).toBe(1000);
     });
   });
 
@@ -122,6 +136,38 @@ describe('RequestContext', () => {
       const ip = context.getClientIp({ trustProxy: false });
       expect(ip).toBe('127.0.0.1');
     });
+
+    test('should honour config passed to the constructor', () => {
+      const context = new RequestContext(
+        {
+          method: 'GET',
+          url: 'http://localhost/graphql',
+          headers: {
+            'x-forwarded-for': '10.0.0.1, 10.0.0.2',
+          },
+          ip: '127.0.0.1',
+        },
+        { trustProxy: true }
+      );
+
+      expect(context.getClientIp()).toBe('10.0.0.1');
+    });
+
+    test('should let a per-call config override the constructor config', () => {
+      const context = new RequestContext(
+        {
+          method: 'GET',
+          url: 'http://localhost/graphql',
+          headers: {
+            'x-forwarded-for': '10.0.0.1',
+          },
+          ip: '127.0.0.1',
+        },
+        { trustProxy: true }
+      );
+
+      expect(context.getClientIp({ trustProxy: false })).toBe('127.0.0.1');
+    });
   });
 
   describe('getElapsedTime', () => {
@@ -151,6 +197,31 @@ describe('RequestContext', () => {
 
       expect(extended.requestId).toBe(context.requestId);
       expect(extended.userId).toBe('user-123');
+    });
+
+    test('should copy inherited state as own properties', () => {
+      const context = new RequestContext({
+        method: 'GET',
+        url: 'http://localhost/graphql',
+        headers: { 'x-custom': 'value' },
+      });
+
+      const extended = context.extend({ userId: 'user-123' });
+
+      const keys = Object.keys(extended);
+      expect(keys).toContain('requestId');
+      expect(keys).toContain('startTime');
+      expect(keys).toContain('request');
+      expect(keys).toContain('userId');
+
+      // Spread sees the inherited state too
+      const spread = { ...extended };
+      expect(spread.requestId).toBe(context.requestId);
+
+      // Class methods are preserved via the prototype
+      expect(extended).toBeInstanceOf(RequestContext);
+      expect(extended.getHeader('X-Custom')).toBe('value');
+      expect(typeof extended.getElapsedTime()).toBe('number');
     });
   });
 
@@ -198,5 +269,23 @@ describe('createRequestContext', () => {
     });
 
     expect(context.requestId).toBe('custom-id');
+  });
+
+  test('should populate ip from the optional third argument', () => {
+    const request = new Request('http://localhost/graphql');
+
+    const context = createRequestContext(request, undefined, '192.168.1.50');
+
+    expect(context.request.ip).toBe('192.168.1.50');
+    expect(context.getClientIp()).toBe('192.168.1.50');
+  });
+
+  test('should leave ip undefined when not supplied', () => {
+    const request = new Request('http://localhost/graphql');
+
+    const context = createRequestContext(request);
+
+    expect(context.request.ip).toBeUndefined();
+    expect(context.getClientIp()).toBeUndefined();
   });
 });

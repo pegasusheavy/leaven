@@ -8,9 +8,9 @@
 - **Type**: GraphQL Library
 - **Runtime**: Bun (JavaScript/TypeScript)
 - **License**: Apache 2.0
-- **Author**: Pegasus Heavy Industries LLC
+- **Author**: Joseph Quinn
 - **Website**: https://leaven.dev
-- **Repository**: https://github.com/PegasusHeavyIndustries/leaven
+- **Repository**: https://github.com/quinnjr/leaven
 - **Theme**: Bakery/Artisan Bread (because it makes your API rise!)
 
 ## Installation (Getting Your Ingredients)
@@ -123,8 +123,8 @@ For complete recipes, visit https://leaven.dev
 
 ## Contact
 
-- GitHub: https://github.com/PegasusHeavyIndustries/leaven
-- Issues: https://github.com/PegasusHeavyIndustries/leaven/issues
+- GitHub: https://github.com/quinnjr/leaven
+- Issues: https://github.com/quinnjr/leaven/issues
 
 ---
-Baked with ❤️ and ☕ by Pegasus Heavy Industries LLC
+Baked with ❤️ and ☕ by Joseph Quinn

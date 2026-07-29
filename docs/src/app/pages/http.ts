@@ -40,7 +40,7 @@ import { SeoService } from '../services/seo.service';
             <li><strong class="text-white">Native Bun APIs</strong> - Maximum performance with Bun.serve()</li>
             <li><strong class="text-white">CORS Support</strong> - Configurable CORS handling</li>
             <li><strong class="text-white">Request Parsing</strong> - JSON, GraphQL, multipart support</li>
-            <li><strong class="text-white">Playground</strong> - Built-in GraphQL Playground</li>
+            <li><strong class="text-white">Playground</strong> - Built-in GraphiQL on GET requests</li>
             <li><strong class="text-white">Multiple Routes</strong> - Custom route handling</li>
           </ul>
         </div>
@@ -166,6 +166,20 @@ export class HttpComponent implements OnInit {
       canonical: '/http',
       ogType: 'article'
     });
+
+    // Emit the JSON-LD counterpart of this page's TechArticle microdata,
+    // plus the breadcrumb trail rendered at the top of the article.
+    this.seoService.updateStructuredData([
+      this.seoService.generateTechArticleSchema({
+        title: 'HTTP Server',
+        description: 'Set up a high-performance GraphQL HTTP server with @leaven-graphql/http. CORS, authentication, and Bun-native APIs.',
+        url: '/http'
+      }),
+      this.seoService.generateBreadcrumbSchema([
+        { name: 'Home', url: '/' },
+        { name: 'HTTP Server', url: '/http' }
+      ])
+    ]);
   }
 
   installCode = `bun add @leaven-graphql/http @leaven-graphql/core graphql`;
@@ -195,14 +209,16 @@ const server = createServer({
   path: '/graphql',              // Default: '/graphql'
 
   // Features
-  playground: true,              // Enable GraphQL Playground
+  playground: true,              // Serve GraphiQL on GET requests
   introspection: true,           // Enable introspection
   cors: true,                    // Enable CORS
 
-  // Caching & Performance
-  cache: {
-    maxSize: 1000,
-    ttl: 3600000,
+  // Caching & Performance (forwarded to the executor)
+  executor: {
+    cache: {
+      maxSize: 1000,
+      ttl: 3600000,
+    },
   },
 
   // Error handling
@@ -234,8 +250,8 @@ const server = createServer({
   cors: {
     // Allowed origins
     origin: ['https://example.com', 'https://app.example.com'],
-    // Or use a function
-    // origin: (request) => request.headers.get('origin'),
+    // Or use a predicate over the request's Origin header
+    // origin: (origin) => origin.endsWith('.example.com'),
 
     // Allowed methods
     methods: ['GET', 'POST', 'OPTIONS'],

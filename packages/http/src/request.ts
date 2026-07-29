@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/http - Request parsing utilities
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -56,9 +56,10 @@ export async function parseBody(request: Request): Promise<ParsedBody> {
     return parseMultipartBody(request);
   }
 
-  // Try JSON as fallback
+  // Try JSON as fallback. The `await` is required: without it a rejected
+  // promise would be returned to the caller and bypass this catch entirely.
   try {
-    return parseJsonBody(request);
+    return await parseJsonBody(request);
   } catch {
     throw new Error('Unsupported content type');
   }
@@ -178,18 +179,63 @@ function parseVariables(
 }
 
 /**
- * Set a value at a path in an object
+ * Path segments that must never be traversed or written.
+ *
+ * Without this guard an unauthenticated multipart request whose `map` names
+ * `__proto__.polluted` walks straight into `Object.prototype` and writes
+ * there, poisoning every object in the process.
+ */
+const FORBIDDEN_PATH_SEGMENTS: ReadonlySet<string> = new Set([
+  '__proto__',
+  'constructor',
+  'prototype',
+]);
+
+/**
+ * Roots a multipart file path is allowed to address.
+ *
+ * The graphql-multipart-request-spec only ever maps files into the operation
+ * payload, so anything else is a client error (or an attack) and is dropped.
+ */
+const ALLOWED_PATH_ROOTS: ReadonlySet<string> = new Set(['variables', 'operations']);
+
+/**
+ * Set a value at a path in an object.
+ *
+ * Only spec-legal paths are honoured: the first segment must be `variables`
+ * or `operations`, and no segment may name a prototype-reaching key.
+ * Intermediates are created with a null prototype and existence is checked
+ * with `hasOwnProperty` (not `in`) so inherited keys cannot be traversed.
  */
 function setPath(obj: Record<string, unknown>, path: string, value: unknown): void {
   const parts = path.split('.');
-  let current = obj;
+
+  const root = parts[0];
+  if (root === undefined || !ALLOWED_PATH_ROOTS.has(root)) {
+    return;
+  }
+
+  for (const part of parts) {
+    if (FORBIDDEN_PATH_SEGMENTS.has(part)) {
+      return;
+    }
+  }
+
+  let current: Record<string, unknown> = obj;
 
   for (let i = 0; i < parts.length - 1; i++) {
     const part = parts[i]!;
-    if (!(part in current)) {
-      current[part] = {};
+    const existing = Object.prototype.hasOwnProperty.call(current, part)
+      ? current[part]
+      : undefined;
+
+    if (typeof existing === 'object' && existing !== null) {
+      current = existing as Record<string, unknown>;
+    } else {
+      const next = Object.create(null) as Record<string, unknown>;
+      current[part] = next;
+      current = next;
     }
-    current = current[part] as Record<string, unknown>;
   }
 
   const lastPart = parts[parts.length - 1]!;
@@ -198,8 +244,14 @@ function setPath(obj: Record<string, unknown>, path: string, value: unknown): vo
 
 /**
  * Validate a GraphQL request
+ *
+ * `query` holds the parameters parsed off the URL; it defaults to empty so
+ * callers that only have a body can pass a single argument.
  */
-export function validateRequest(body: ParsedBody, query: ParsedBody): RequestValidation {
+export function validateRequest(
+  body: ParsedBody,
+  query: ParsedBody = {}
+): RequestValidation {
   // Merge body and query params (body takes precedence)
   const merged = {
     query: body.query ?? query.query,

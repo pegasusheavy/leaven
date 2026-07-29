@@ -22,8 +22,8 @@ Leaven is a modular, high-performance GraphQL library designed specifically for 
 ## 📦 Installation
 
 ```bash
-# Install the meta-package (includes everything)
-bun add leaven graphql
+# Install the meta-package (all runtime modules)
+bun add @leaven-graphql/leaven graphql
 
 # Or install individual packages
 bun add @leaven-graphql/core @leaven-graphql/http graphql
@@ -72,7 +72,7 @@ console.log('🥖 Server ready at http://localhost:4000/graphql');
 | [`@leaven-graphql/plugins`](./packages/plugins) | Plugin system with built-in plugins |
 | [`@leaven-graphql/playground`](./packages/playground) | GraphQL Playground and GraphiQL |
 | [`@leaven-graphql/nestjs`](./packages/nestjs) | NestJS framework integration |
-| [`leaven`](./packages/leaven) | Meta-package re-exporting all modules |
+| [`@leaven-graphql/leaven`](./packages/leaven) | Meta-package re-exporting the runtime modules (the NestJS integration installs separately as `@leaven-graphql/nestjs`) |
 
 ## 🔧 Core Executor
 
@@ -157,16 +157,29 @@ const resolvers = {
 
 ## 🧩 Plugin System
 
-Extend Leaven with plugins:
+Plugins are wired up **manually** today. `LeavenExecutor` has no `plugins`
+option — `ExecutorConfig` is `schema`, `rootValue`, `cache`, `parseOptions`,
+`compilerOptions`, `introspection`, `maxDepth`, `maxComplexity`, `hooks` and
+`metrics` — and no package in Leaven (core, http, ws, or nestjs) dispatches
+plugin hooks for you. To run plugins you construct a `PluginManager` yourself
+and call its hooks around `executor.execute`:
 
 ```typescript
 import {
+  LeavenExecutor,
+  parseDocument,
+  type GraphQLRequest,
+} from '@leaven-graphql/core';
+import {
+  createPluginManager,
   createLoggingPlugin,
   createDepthLimitPlugin,
   createComplexityPlugin,
 } from '@leaven-graphql/plugins';
 
-const executor = new LeavenExecutor({
+const executor = new LeavenExecutor({ schema });
+
+const plugins = createPluginManager({
   schema,
   plugins: [
     createLoggingPlugin({ logger: console }),
@@ -174,7 +187,37 @@ const executor = new LeavenExecutor({
     createComplexityPlugin({ maxComplexity: 1000 }),
   ],
 });
+
+async function run<TContext>(request: GraphQLRequest, context: TContext) {
+  const pluginContext = plugins.createContext(request, context);
+
+  try {
+    const query = await plugins.beforeParse(request.query, pluginContext);
+
+    // The depth-limit and complexity plugins run in `afterParse` and throw
+    // when a limit is exceeded, so the document has to be parsed here for
+    // them to see it at all.
+    const document = await plugins.afterParse(
+      parseDocument(query),
+      pluginContext
+    );
+
+    // A `beforeExecute` hook may return a response outright (a cache hit,
+    // say); when it does, skip execution and use it.
+    const cached = await plugins.beforeExecute(document, pluginContext);
+    const response =
+      cached ?? (await executor.execute({ ...request, query }, context)).response;
+
+    return await plugins.afterExecute(response, pluginContext);
+  } catch (error) {
+    throw await plugins.onError(error as Error, pluginContext);
+  }
+}
 ```
+
+For a limit that does **not** need this plumbing, set `maxDepth` and
+`maxComplexity` directly on `LeavenExecutor` — the executor enforces those
+itself. See [`packages/plugins`](./packages/plugins) for the full hook list.
 
 ## 🚨 Error Handling
 
@@ -228,10 +271,10 @@ export class AppModule {}
 ```typescript
 import { Resolver, Query } from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
-import { AuthGuard, Roles, Context } from '@leaven-graphql/nestjs';
+import { AuthGuard, RolesGuard, Roles, Context } from '@leaven-graphql/nestjs';
 
 @Resolver()
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, RolesGuard)
 export class UserResolver {
   @Query(() => User)
   @Roles('admin')
@@ -291,10 +334,10 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 ## 📄 License
 
-Apache 2.0 - [Pegasus Heavy Industries LLC](https://pegasusheavy.industries)
+Apache 2.0 - Joseph Quinn
 
 ---
 
 <p align="center">
-  Made with 🍞 by <a href="https://pegasusheavy.industries">Pegasus Heavy Industries</a>
+  Made with 🍞 by <a href="https://github.com/quinnjr">Joseph Quinn</a>
 </p>

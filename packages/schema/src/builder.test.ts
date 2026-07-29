@@ -1,13 +1,37 @@
 /**
  * @leaven-graphql/schema - Builder tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import { describe, test, expect } from 'bun:test';
-import { graphql } from 'graphql';
+import {
+  graphql,
+  parse,
+  subscribe,
+  type ExecutionResult,
+  type GraphQLEnumType,
+  type GraphQLObjectType,
+} from 'graphql';
 import { SchemaBuilder, createSchemaBuilder } from './builder';
+
+/**
+ * Drain a subscription result into an array of field values
+ */
+async function collectSubscription(
+  result: unknown,
+  fieldName: string
+): Promise<unknown[]> {
+  expect(Symbol.asyncIterator in (result as object)).toBe(true);
+
+  const values: unknown[] = [];
+  for await (const payload of result as AsyncIterable<ExecutionResult>) {
+    expect(payload.errors).toBeUndefined();
+    values.push(payload.data?.[fieldName]);
+  }
+  return values;
+}
 
 describe('SchemaBuilder', () => {
   describe('constructor', () => {
@@ -27,7 +51,7 @@ describe('SchemaBuilder', () => {
   });
 
   describe('addScalar', () => {
-    test('should add custom scalar type', () => {
+    test('should serialize values through the custom scalar', async () => {
       const builder = new SchemaBuilder();
 
       builder.addScalar({
@@ -45,12 +69,43 @@ describe('SchemaBuilder', () => {
       });
 
       const schema = builder.build();
-      expect(schema).toBeDefined();
+      const result = await graphql({ schema, source: '{ now }' });
+
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.now).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    test('should parse values through the custom scalar', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addScalar({
+        name: 'Date',
+        serialize: (value) => (value as Date).toISOString(),
+        parseValue: (value) => new Date(value as string),
+      });
+
+      builder.addQueryFields({
+        year: {
+          type: 'Int!',
+          args: { at: { type: 'Date!' } },
+          resolve: (_, { at }: { at: Date }) => at.getUTCFullYear(),
+        },
+      });
+
+      const schema = builder.build();
+      const result = await graphql({
+        schema,
+        source: 'query ($at: Date!) { year(at: $at) }',
+        variableValues: { at: '2031-06-02T00:00:00.000Z' },
+      });
+
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.year).toBe(2031);
     });
   });
 
   describe('addEnum', () => {
-    test('should add enum type', () => {
+    test('should serialize internal values back to enum names', async () => {
       const builder = new SchemaBuilder();
 
       builder.addEnum({
@@ -69,10 +124,13 @@ describe('SchemaBuilder', () => {
       });
 
       const schema = builder.build();
-      expect(schema).toBeDefined();
+      const result = await graphql({ schema, source: '{ status }' });
+
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.status).toBe('ACTIVE');
     });
 
-    test('should support enum with descriptions', () => {
+    test('should support enum with descriptions', async () => {
       const builder = new SchemaBuilder();
 
       builder.addEnum({
@@ -90,12 +148,23 @@ describe('SchemaBuilder', () => {
       });
 
       const schema = builder.build();
-      expect(schema).toBeDefined();
+      const priority = schema.getType('Priority') as GraphQLEnumType;
+
+      expect(priority.description).toBe('Priority levels');
+      expect(priority.getValue('HIGH')?.description).toBe('High priority');
+      expect(priority.getValue('LOW')?.deprecationReason).toBe(
+        'Use MEDIUM instead'
+      );
+
+      const result = await graphql({ schema, source: '{ priority }' });
+
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.priority).toBe('HIGH');
     });
   });
 
   describe('addType', () => {
-    test('should add object type', () => {
+    test('should add object type', async () => {
       const builder = new SchemaBuilder();
 
       builder.addType({
@@ -116,7 +185,17 @@ describe('SchemaBuilder', () => {
       });
 
       const schema = builder.build();
-      expect(schema).toBeDefined();
+      const result = await graphql({
+        schema,
+        source: '{ user(id: "7") { id name email } }',
+      });
+
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.user).toEqual({
+        id: '7',
+        name: 'Test',
+        email: 'test@test.com',
+      });
     });
 
     test('should handle nested types', async () => {
@@ -166,7 +245,7 @@ describe('SchemaBuilder', () => {
   });
 
   describe('addInputType', () => {
-    test('should add input type', () => {
+    test('should accept the input object as a mutation argument', async () => {
       const builder = new SchemaBuilder();
 
       builder.addInputType({
@@ -197,12 +276,46 @@ describe('SchemaBuilder', () => {
       });
 
       const schema = builder.build();
-      expect(schema).toBeDefined();
+      const result = await graphql({
+        schema,
+        source:
+          'mutation { createUser(input: { name: "Ada", email: "ada@example.com" }) { id name } }',
+      });
+
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.createUser).toEqual({ id: '1', name: 'Ada' });
+    });
+
+    test('should reject an input object missing a required field', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addInputType({
+        name: 'CreateUserInput',
+        fields: { name: { type: 'String!' } },
+      });
+
+      builder.addMutationFields({
+        createUser: {
+          type: 'String!',
+          args: { input: { type: 'CreateUserInput!' } },
+          resolve: () => 'ok',
+        },
+      });
+
+      const schema = builder.build();
+      const result = await graphql({
+        schema,
+        source: 'mutation { createUser(input: {}) }',
+      });
+
+      expect(result.errors?.[0]?.message).toContain(
+        'CreateUserInput.name" of required type "String!" was not provided'
+      );
     });
   });
 
   describe('addInterface', () => {
-    test('should add interface type', () => {
+    test('should let the object type implement the interface', async () => {
       const builder = new SchemaBuilder();
 
       builder.addInterface({
@@ -229,12 +342,26 @@ describe('SchemaBuilder', () => {
       });
 
       const schema = builder.build();
-      expect(schema).toBeDefined();
+      const user = schema.getType('User') as GraphQLObjectType;
+
+      expect(user.getInterfaces().map((iface) => iface.name)).toEqual(['Node']);
+
+      const result = await graphql({
+        schema,
+        source: '{ user { __typename ... on Node { id } name } }',
+      });
+
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.user).toEqual({
+        __typename: 'User',
+        id: '1',
+        name: 'Test',
+      });
     });
   });
 
   describe('addUnion', () => {
-    test('should add union type', () => {
+    test('should resolve the union member through resolveType', async () => {
       const builder = new SchemaBuilder();
 
       builder.addType({
@@ -256,7 +383,8 @@ describe('SchemaBuilder', () => {
       builder.addUnion({
         name: 'Pet',
         types: ['Cat', 'Dog'],
-        resolveType: (value: { meows?: boolean }) => (value.meows !== undefined ? 'Cat' : 'Dog'),
+        resolveType: (value) =>
+          (value as { meows?: boolean }).meows !== undefined ? 'Cat' : 'Dog',
       });
 
       builder.addQueryFields({
@@ -264,10 +392,43 @@ describe('SchemaBuilder', () => {
           type: 'Pet',
           resolve: () => ({ name: 'Whiskers', meows: true }),
         },
+        stray: {
+          type: 'Pet',
+          resolve: () => ({ name: 'Rex', barks: true }),
+        },
       });
 
       const schema = builder.build();
-      expect(schema).toBeDefined();
+      const result = await graphql({
+        schema,
+        source: `{
+          pet { __typename ... on Cat { name meows } }
+          stray { __typename ... on Dog { name barks } }
+        }`,
+      });
+
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.pet).toEqual({
+        __typename: 'Cat',
+        name: 'Whiskers',
+        meows: true,
+      });
+      expect(result.data?.stray).toEqual({
+        __typename: 'Dog',
+        name: 'Rex',
+        barks: true,
+      });
+    });
+
+    test('should throw when a union names an unknown member type', () => {
+      const builder = new SchemaBuilder();
+
+      builder.addUnion({ name: 'Pet', types: ['Cat'] });
+      builder.addQueryFields({ pet: { type: 'Pet' } });
+
+      expect(() => builder.build()).toThrow(
+        'Type "Cat" not found for union "Pet"'
+      );
     });
   });
 
@@ -347,6 +508,54 @@ describe('SchemaBuilder', () => {
       const schema = builder.build();
       expect(schema.getSubscriptionType()).toBeDefined();
     });
+
+    test('should execute subscriptions end-to-end', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addSubscriptionFields({
+        countdown: {
+          type: 'Int!',
+          subscribe: async function* () {
+            yield { countdown: 3 };
+            yield { countdown: 2 };
+            yield { countdown: 1 };
+          },
+        },
+      });
+
+      const schema = builder.build();
+      const result = await subscribe({
+        schema,
+        document: parse('subscription { countdown }'),
+      });
+
+      const values = await collectSubscription(result, 'countdown');
+      expect(values).toEqual([3, 2, 1]);
+    });
+
+    test('should combine subscribe with a payload-mapping resolve', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addSubscriptionFields({
+        doubled: {
+          type: 'Int!',
+          subscribe: async function* () {
+            yield 1;
+            yield 2;
+          },
+          resolve: (payload) => (payload as number) * 2,
+        },
+      });
+
+      const schema = builder.build();
+      const result = await subscribe({
+        schema,
+        document: parse('subscription { doubled }'),
+      });
+
+      const values = await collectSubscription(result, 'doubled');
+      expect(values).toEqual([2, 4]);
+    });
   });
 
   describe('build', () => {
@@ -390,6 +599,222 @@ describe('SchemaBuilder', () => {
       const result = await graphql({ schema, source: '{ hello }' });
 
       expect(result.data?.hello).toBe('Applied resolver');
+    });
+
+    test('should apply resolvers to non-root types', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addType({
+        name: 'User',
+        fields: {
+          firstName: { type: 'String!' },
+          lastName: { type: 'String!' },
+          fullName: { type: 'String!' },
+        },
+      });
+
+      builder.addQueryFields({
+        user: {
+          type: 'User',
+          resolve: () => ({ firstName: 'Ada', lastName: 'Lovelace' }),
+        },
+      });
+
+      builder.applyResolvers({
+        User: {
+          fullName: (parent) => {
+            const user = parent as { firstName: string; lastName: string };
+            return `${user.firstName} ${user.lastName}`;
+          },
+        },
+      });
+
+      const schema = builder.build();
+      const result = await graphql({ schema, source: '{ user { fullName } }' });
+
+      expect(result.errors).toBeUndefined();
+      expect(result.data?.user).toEqual({ fullName: 'Ada Lovelace' });
+    });
+
+    test('should route bare Subscription resolvers to subscribe', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addSubscriptionFields({
+        tick: { type: 'Int!' },
+      });
+
+      builder.applyResolvers({
+        Subscription: {
+          tick: async function* () {
+            yield { tick: 1 };
+            yield { tick: 2 };
+          },
+        },
+      });
+
+      const schema = builder.build();
+      const result = await subscribe({
+        schema,
+        document: parse('subscription { tick }'),
+      });
+
+      const values = await collectSubscription(result, 'tick');
+      expect(values).toEqual([1, 2]);
+    });
+
+    test('should support the { resolve, subscribe } object form', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addSubscriptionFields({
+        tick: { type: 'Int!' },
+      });
+
+      builder.applyResolvers({
+        Subscription: {
+          tick: {
+            subscribe: async function* () {
+              yield 1;
+              yield 2;
+            },
+            resolve: (payload) => (payload as number) * 10,
+          },
+        },
+      });
+
+      const schema = builder.build();
+      const result = await subscribe({
+        schema,
+        document: parse('subscription { tick }'),
+      });
+
+      const values = await collectSubscription(result, 'tick');
+      expect(values).toEqual([10, 20]);
+    });
+
+    test('should throw for resolvers on unknown types', () => {
+      const builder = new SchemaBuilder();
+
+      builder.addQueryFields({
+        hello: { type: 'String' },
+      });
+
+      expect(() =>
+        builder.applyResolvers({
+          User: { name: () => 'x' },
+        })
+      ).toThrow('applyResolvers: unknown type "User"');
+    });
+
+    test('should throw for resolvers on unknown fields', () => {
+      const builder = new SchemaBuilder();
+
+      builder.addQueryFields({
+        hello: { type: 'String' },
+      });
+
+      expect(() =>
+        builder.applyResolvers({
+          Query: { helo: () => 'x' },
+        })
+      ).toThrow('applyResolvers: field "Query.helo" is not defined');
+    });
+
+    test('should take effect on non-root types after an earlier build', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addType({
+        name: 'User',
+        fields: { name: { type: 'String' } },
+      });
+
+      builder.addQueryFields({
+        user: { type: 'User', resolve: () => ({}) },
+      });
+
+      // Reading the fields of the first schema memoises User's field thunk
+      const first = builder.build();
+      const before = await graphql({ schema: first, source: '{ user { name } }' });
+      expect(before.errors).toBeUndefined();
+      expect(before.data?.user).toEqual({ name: null });
+
+      builder.applyResolvers({ User: { name: () => 'Ada' } });
+
+      const second = builder.build();
+      const after = await graphql({ schema: second, source: '{ user { name } }' });
+
+      expect(after.errors).toBeUndefined();
+      expect(after.data?.user).toEqual({ name: 'Ada' });
+    });
+
+    test('should not disturb the schema returned by an earlier build', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addType({
+        name: 'User',
+        fields: { name: { type: 'String' } },
+      });
+
+      builder.addQueryFields({
+        user: { type: 'User', resolve: () => ({}) },
+      });
+
+      const first = builder.build();
+      await graphql({ schema: first, source: '{ user { name } }' });
+
+      builder.applyResolvers({ User: { name: () => 'Ada' } });
+      builder.build();
+
+      const again = await graphql({ schema: first, source: '{ user { name } }' });
+
+      expect(again.errors).toBeUndefined();
+      expect(again.data?.user).toEqual({ name: null });
+    });
+  });
+
+  describe('repeated builds', () => {
+    test('should keep interfaces and unions consistent across builds', async () => {
+      const builder = new SchemaBuilder();
+
+      builder.addInterface({
+        name: 'Node',
+        fields: { id: { type: 'ID!' } },
+      });
+
+      builder.addType({
+        name: 'Cat',
+        interfaces: ['Node'],
+        fields: { id: { type: 'ID!' }, meows: { type: 'Boolean!' } },
+      });
+
+      builder.addType({
+        name: 'Dog',
+        interfaces: ['Node'],
+        fields: { id: { type: 'ID!' }, barks: { type: 'Boolean!' } },
+      });
+
+      builder.addUnion({
+        name: 'Pet',
+        types: ['Cat', 'Dog'],
+        resolveType: (value) =>
+          (value as { meows?: boolean }).meows !== undefined ? 'Cat' : 'Dog',
+      });
+
+      builder.addQueryFields({
+        pet: { type: 'Pet', resolve: () => ({ id: '1', meows: true }) },
+      });
+
+      const source = '{ pet { __typename ... on Cat { id meows } } }';
+      const expected = { __typename: 'Cat', id: '1', meows: true };
+
+      const first = await graphql({ schema: builder.build(), source });
+      expect(first.errors).toBeUndefined();
+      expect(first.data?.pet).toEqual(expected);
+
+      // A second build must rewire the union members and interface
+      // implementations onto the freshly created object types
+      const second = await graphql({ schema: builder.build(), source });
+      expect(second.errors).toBeUndefined();
+      expect(second.data?.pet).toEqual(expected);
     });
   });
 });

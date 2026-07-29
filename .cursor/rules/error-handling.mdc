@@ -8,7 +8,7 @@ alwaysApply: false
 
 ## Error Classes
 
-Use the error classes from `@leaven/errors`:
+Use the error classes from `@leaven-graphql/errors`:
 
 ```typescript
 import {
@@ -20,8 +20,9 @@ import {
   RateLimitError,
   ComplexityError,
   DepthLimitError,
+  PersistedQueryError,
   InputError,
-} from '@leaven/errors';
+} from '@leaven-graphql/errors';
 ```
 
 ## Error Hierarchy
@@ -35,6 +36,7 @@ LeavenError (base)
 ├── RateLimitError       # 429 - Rate limit exceeded
 ├── ComplexityError      # Query too complex
 ├── DepthLimitError      # Query too deep
+├── PersistedQueryError  # Persisted query not found/invalid
 └── InputError           # Invalid input value
 ```
 
@@ -68,17 +70,22 @@ throw new ValidationError('Invalid input', [
 ## Error Codes
 
 ```typescript
-import { ErrorCode } from '@leaven/errors';
+import { ErrorCode } from '@leaven-graphql/errors';
 
 ErrorCode.INTERNAL_ERROR        // Generic server error
+ErrorCode.BAD_REQUEST           // Malformed request
+ErrorCode.PAYLOAD_TOO_LARGE     // Request body exceeded the size limit
 ErrorCode.VALIDATION_ERROR      // Input validation failed
+ErrorCode.PARSE_ERROR           // Failed to parse GraphQL query
 ErrorCode.UNAUTHENTICATED       // Authentication required
 ErrorCode.FORBIDDEN             // Access denied
 ErrorCode.NOT_FOUND             // Resource not found
+ErrorCode.ALREADY_EXISTS        // Resource already exists
 ErrorCode.RATE_LIMITED          // Too many requests
 ErrorCode.COMPLEXITY_LIMIT      // Query too complex
 ErrorCode.DEPTH_LIMIT           // Query too deep
 ErrorCode.INVALID_INPUT         // Invalid input value
+ErrorCode.MISSING_REQUIRED_FIELD // Required field is missing
 ErrorCode.PERSISTED_QUERY_NOT_FOUND
 ErrorCode.PERSISTED_QUERY_INVALID
 ```
@@ -86,16 +93,55 @@ ErrorCode.PERSISTED_QUERY_INVALID
 ## Error Formatting
 
 ```typescript
-import { formatError, maskError } from '@leaven/errors';
+import { formatError, maskError, isLeavenError } from '@leaven-graphql/errors';
 
 // Format for GraphQL response
 const formatted = formatError(error);
 // { message: '...', extensions: { code: '...' } }
 
 // Mask internal errors in production
-const safe = maskError(error, { production: true });
-// Internal errors become "Internal server error"
+const safe = maskError(error, { maskErrors: true });
+// Unexpected errors become "An unexpected error occurred"
+// (override with the `maskedMessage` option). Intentional Leaven
+// errors and errors with a known Leaven code are never masked.
 ```
+
+### `originalError` is the LeavenError, not the wrapped cause
+
+`LeavenError.toGraphQLError()` (used by `errorToGraphQL`, and therefore by
+`formatError`/`maskError`) attaches the `LeavenError` itself as the
+`GraphQLError`'s `originalError`. That is what lets `maskError` recognise the
+error as intentional and leave it unmasked.
+
+The cause passed to the constructor sits one level deeper:
+
+```typescript
+const gqlError = new LeavenError('Query failed', ErrorCode.INTERNAL_ERROR, {
+  originalError: dbError,
+}).toGraphQLError();
+
+gqlError.originalError;                // the LeavenError
+gqlError.originalError.originalError;  // dbError
+```
+
+So any `formatError` hook, logger or Sentry integration that matches on the
+underlying cause must unwrap one extra level:
+
+```typescript
+// Wrong - never matches for a wrapped Leaven error
+if (gqlError.originalError instanceof MyDbError) { /* ... */ }
+
+// Right
+const cause = isLeavenError(gqlError.originalError)
+  ? gqlError.originalError.originalError
+  : gqlError.originalError;
+
+if (cause instanceof MyDbError) { /* ... */ }
+```
+
+`extensions` are copied verbatim by `toGraphQLError()`, so subclass detail such
+as `RateLimitError.retryAfter` or `ValidationError.validationErrors` survives
+the conversion and reaches the formatted response.
 
 ## Error Handling in Resolvers
 
@@ -122,7 +168,13 @@ const resolve = async (_, args, context) => {
 
 ## HTTP Status Codes
 
-Errors map to HTTP status codes automatically:
+`ERROR_CODES` in `@leaven-graphql/errors` is the single source of truth: it maps
+every `ErrorCode` to its HTTP status, and `LeavenError` reads its `statusCode`
+from it unless one is passed explicitly. `buildResponse` in
+`@leaven-graphql/http` derives response statuses from the same registry.
+
+Each error class carries a `statusCode` property for transports to use
+when mapping errors to HTTP responses. The reference mapping:
 
 | Error Class          | HTTP Status |
 |---------------------|-------------|
@@ -130,8 +182,27 @@ Errors map to HTTP status codes automatically:
 | InputError          | 400         |
 | ComplexityError     | 400         |
 | DepthLimitError     | 400         |
+| PersistedQueryError | 400         |
 | AuthenticationError | 401         |
 | AuthorizationError  | 403         |
 | NotFoundError       | 404         |
 | RateLimitError      | 429         |
 | LeavenError (default)| 500        |
+
+Some codes have no dedicated error class and are raised as a bare `LeavenError`
+or emitted directly by a transport:
+
+| Error Code            | HTTP Status |
+|-----------------------|-------------|
+| `BAD_REQUEST`         | 400         |
+| `PARSE_ERROR`         | 400         |
+| `ALREADY_EXISTS`      | 409         |
+| `PAYLOAD_TOO_LARGE`   | 413         |
+
+`@leaven-graphql/http` emits `PAYLOAD_TOO_LARGE` (413) when a request body
+exceeds `maxBodySize` — both on the `Content-Length` fast path and while
+reading the stream, since the header may be absent, malformed, or lying.
+
+Note that a status is only derived from an error when the response is a *total*
+failure. A response that carries `data` alongside `errors` is a spec-conformant
+partial success and stays 200 whatever the error codes say.

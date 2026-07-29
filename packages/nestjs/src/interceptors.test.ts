@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/nestjs - Interceptors tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -9,6 +9,8 @@ import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { of, throwError } from 'rxjs';
 import { Reflector } from '@nestjs/core';
 import type { ExecutionContext, CallHandler } from '@nestjs/common';
+import { GraphQLError, Source } from 'graphql';
+import { ValidationError } from '@leaven-graphql/errors';
 import {
   LoggingInterceptor,
   ErrorFormattingInterceptor,
@@ -45,11 +47,14 @@ function createErrorCallHandler(error: Error): CallHandler {
 describe('LoggingInterceptor', () => {
   let interceptor: LoggingInterceptor;
   let consoleLogSpy: ReturnType<typeof mock>;
+  let consoleErrorSpy: ReturnType<typeof mock>;
 
   beforeEach(() => {
     interceptor = new LoggingInterceptor();
     consoleLogSpy = mock(() => {});
+    consoleErrorSpy = mock(() => {});
     console.log = consoleLogSpy;
+    console.error = consoleErrorSpy;
   });
 
   test('should log successful execution', async () => {
@@ -89,6 +94,30 @@ describe('LoggingInterceptor', () => {
       });
     });
   });
+
+  test('should log failures with timing and error, then rethrow', async () => {
+    const context = createMockContext();
+    const error = new Error('resolver blew up');
+    const handler = createErrorCallHandler(error);
+
+    const result$ = interceptor.intercept(context, handler);
+
+    await new Promise<void>((resolve) => {
+      result$.subscribe({
+        error: (err) => {
+          expect(err).toBe(error);
+          expect(consoleErrorSpy).toHaveBeenCalled();
+          expect(consoleLogSpy).not.toHaveBeenCalled();
+          const [message, loggedError] = consoleErrorSpy.mock.calls[0];
+          expect(message).toContain('[GraphQL]');
+          expect(message).toContain('TestClass.testMethod');
+          expect(message).toContain('ms');
+          expect(loggedError).toBe(error);
+          resolve();
+        },
+      });
+    });
+  });
 });
 
 describe('ErrorFormattingInterceptor', () => {
@@ -114,7 +143,7 @@ describe('ErrorFormattingInterceptor', () => {
     });
   });
 
-  test('should format errors', async () => {
+  test('should format unexpected errors with a code and stack trace in development', async () => {
     const context = createMockContext();
     const error = new Error('Test error');
     const handler = createErrorCallHandler(error);
@@ -124,12 +153,139 @@ describe('ErrorFormattingInterceptor', () => {
     await new Promise<void>((resolve) => {
       result$.subscribe({
         error: (err) => {
-          expect(err).toBeInstanceOf(Error);
+          expect(err).toBeInstanceOf(GraphQLError);
+          expect(err).not.toBe(error);
           expect(err.message).toBe('Test error');
+          expect(err.extensions?.code).toBe('INTERNAL_ERROR');
+          expect(err.extensions?.stackTrace).toBeDefined();
           resolve();
         },
       });
     });
+  });
+
+  test('should preserve the source locations of the caught error', async () => {
+    const context = createMockContext();
+    // `locations` is derived from source + positions, so a formatter that
+    // rebuilds the error from message/path/extensions alone silently loses
+    // the position a client would otherwise get from the driver.
+    const error = new GraphQLError('Cannot query field "nope"', {
+      source: new Source('{ nope }'),
+      positions: [2],
+      extensions: { code: 'VALIDATION_ERROR' },
+    });
+    const handler = createErrorCallHandler(error);
+
+    const result$ = interceptor.intercept(context, handler);
+
+    await new Promise<void>((resolve) => {
+      result$.subscribe({
+        error: (err) => {
+          expect(err).toBeInstanceOf(GraphQLError);
+          expect(err).not.toBe(error);
+          expect(err.locations).toEqual([{ line: 1, column: 3 }]);
+          resolve();
+        },
+      });
+    });
+  });
+
+  test('should keep code and message for Leaven errors, even in production', async () => {
+    const previousEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    try {
+      const context = createMockContext();
+      const error = new ValidationError('Invalid email address');
+      const handler = createErrorCallHandler(error);
+
+      const result$ = interceptor.intercept(context, handler);
+
+      await new Promise<void>((resolve) => {
+        result$.subscribe({
+          error: (err) => {
+            expect(err).toBeInstanceOf(GraphQLError);
+            expect(err.message).toBe('Invalid email address');
+            expect(err.extensions?.code).toBe('VALIDATION_ERROR');
+            resolve();
+          },
+        });
+      });
+    } finally {
+      if (previousEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = previousEnv;
+      }
+    }
+  });
+
+  test('should mask unexpected errors in production without mutating the original', async () => {
+    const previousEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    try {
+      const context = createMockContext();
+      const error = new Error('connection refused: db password hunter2');
+      const originalStack = error.stack;
+      const handler = createErrorCallHandler(error);
+
+      const result$ = interceptor.intercept(context, handler);
+
+      await new Promise<void>((resolve) => {
+        result$.subscribe({
+          error: (err) => {
+            expect(err).toBeInstanceOf(GraphQLError);
+            expect(err).not.toBe(error);
+            expect(err.message).toBe('An unexpected error occurred');
+            expect(err.extensions?.code).toBe('INTERNAL_ERROR');
+            expect(err.extensions?.stackTrace).toBeUndefined();
+            // The caught error must not be mutated
+            expect(error.message).toBe('connection refused: db password hunter2');
+            expect(error.stack).toBe(originalStack);
+            resolve();
+          },
+        });
+      });
+    } finally {
+      if (previousEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = previousEnv;
+      }
+    }
+  });
+
+  test('should not leak source locations from a masked error', async () => {
+    const previousEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+
+    try {
+      const context = createMockContext();
+      const error = new GraphQLError('table "users_pii" is missing', {
+        source: new Source('{ nope }'),
+        positions: [2],
+      });
+      const handler = createErrorCallHandler(error);
+
+      const result$ = interceptor.intercept(context, handler);
+
+      await new Promise<void>((resolve) => {
+        result$.subscribe({
+          error: (err) => {
+            expect(err.message).toBe('An unexpected error occurred');
+            expect(err.locations).toBeUndefined();
+            resolve();
+          },
+        });
+      });
+    } finally {
+      if (previousEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = previousEnv;
+      }
+    }
   });
 
   test('should handle non-Error objects', async () => {
@@ -143,8 +299,9 @@ describe('ErrorFormattingInterceptor', () => {
     await new Promise<void>((resolve) => {
       result$.subscribe({
         error: (err) => {
-          expect(err).toBeInstanceOf(Error);
+          expect(err).toBeInstanceOf(GraphQLError);
           expect(err.message).toBe('string error');
+          expect(err.extensions?.code).toBe('INTERNAL_ERROR');
           resolve();
         },
       });
@@ -161,7 +318,7 @@ describe('ComplexityInterceptor', () => {
     interceptor = new ComplexityInterceptor(reflector);
   });
 
-  test('should store complexity in context', async () => {
+  test('should store resolved field complexity in context', async () => {
     reflector.get = () => 10;
 
     const gqlContext: Record<string, unknown> = {};
@@ -177,7 +334,56 @@ describe('ComplexityInterceptor', () => {
     await new Promise<void>((resolve) => {
       result$.subscribe({
         complete: () => {
-          expect(gqlContext._fieldComplexity).toBe(10);
+          expect(gqlContext._resolvedFieldComplexity).toBe(10);
+          resolve();
+        },
+      });
+    });
+  });
+
+  test('should sum complexity across multiple fields instead of overwriting', async () => {
+    const complexities = [10, 5];
+    let call = 0;
+    reflector.get = () => complexities[call++];
+
+    const gqlContext: Record<string, unknown> = {};
+    const context = {
+      ...createMockContext(),
+      getArgs: () => [{}, {}, gqlContext, {}],
+    } as ExecutionContext;
+
+    for (let i = 0; i < complexities.length; i++) {
+      await new Promise<void>((resolve) => {
+        interceptor.intercept(context, createMockCallHandler()).subscribe({
+          complete: resolve,
+        });
+      });
+    }
+
+    expect(gqlContext._resolvedFieldComplexity).toBe(15);
+  });
+
+  test('should never overwrite the driver complexity the guard enforces', async () => {
+    reflector.get = () => 10;
+
+    // Simulates the driver having already populated _queryComplexity, the key
+    // ComplexityGuard compares. The interceptor's observational tally must
+    // stay on its own key.
+    const gqlContext: Record<string, unknown> = { _queryComplexity: 7 };
+    const context = {
+      ...createMockContext(),
+      getArgs: () => [{}, {}, gqlContext, {}],
+    } as ExecutionContext;
+
+    const handler = createMockCallHandler();
+
+    const result$ = interceptor.intercept(context, handler);
+
+    await new Promise<void>((resolve) => {
+      result$.subscribe({
+        complete: () => {
+          expect(gqlContext._queryComplexity).toBe(7);
+          expect(gqlContext._resolvedFieldComplexity).toBe(10);
           resolve();
         },
       });
@@ -200,7 +406,8 @@ describe('ComplexityInterceptor', () => {
     await new Promise<void>((resolve) => {
       result$.subscribe({
         complete: () => {
-          expect(gqlContext._fieldComplexity).toBeUndefined();
+          expect(gqlContext._resolvedFieldComplexity).toBeUndefined();
+          expect(gqlContext._queryComplexity).toBeUndefined();
           resolve();
         },
       });
@@ -235,7 +442,10 @@ describe('CachingInterceptor', () => {
     });
   });
 
-  test('should apply cache hint when defined', async () => {
+  test('should apply the hint only under an Apollo-style info.cacheControl', async () => {
+    // `info.cacheControl` is an Apollo Server construct. Nothing in Leaven's
+    // execution path attaches it, so this exercises a compatibility shim, not
+    // a supported Leaven configuration — see the interceptor's @deprecated tag.
     reflector.get = () => ({ maxAge: 3600, scope: 'PUBLIC' });
 
     const cacheControl = {
@@ -261,6 +471,32 @@ describe('CachingInterceptor', () => {
         },
       });
     });
+  });
+
+  test('is a no-op for the info Leaven actually supplies', async () => {
+    // The GraphQLResolveInfo Leaven passes carries no `cacheControl`, so a
+    // decorated resolver observes nothing at all: the hint is dropped and the
+    // value passes straight through.
+    reflector.get = () => ({ maxAge: 3600, scope: 'PUBLIC' });
+
+    const info: Record<string, unknown> = { fieldName: 'settings' };
+    const context = {
+      ...createMockContext(),
+      getArgs: () => [{}, {}, {}, info],
+    } as ExecutionContext;
+
+    const result$ = interceptor.intercept(context, createMockCallHandler({ data: 'x' }));
+
+    const seen: unknown[] = [];
+    await new Promise<void>((resolve) => {
+      result$.subscribe({
+        next: (value) => seen.push(value),
+        complete: resolve,
+      });
+    });
+
+    expect(seen).toEqual([{ data: 'x' }]);
+    expect(Object.keys(info)).toEqual(['fieldName']);
   });
 });
 
@@ -384,5 +620,25 @@ describe('MetricsInterceptor', () => {
 
     expect(metrics.get(key)?.minDuration).toBeGreaterThanOrEqual(0);
     expect(metrics.get(key)?.maxDuration).toBeGreaterThanOrEqual(0);
+  });
+
+  test('should maintain sane extrema for error-only sequences', async () => {
+    const context = createMockContext();
+
+    for (let i = 0; i < 3; i++) {
+      await new Promise<void>((resolve) => {
+        interceptor.intercept(context, createErrorCallHandler(new Error('fail'))).subscribe({
+          error: () => resolve(),
+        });
+      });
+    }
+
+    const metrics = interceptor.getMetrics().get('TestClass.testMethod');
+
+    expect(metrics?.errorCount).toBe(3);
+    expect(metrics?.successCount).toBe(0);
+    expect(Number.isFinite(metrics?.minDuration ?? Infinity)).toBe(true);
+    expect(metrics?.minDuration).toBeGreaterThanOrEqual(0);
+    expect(metrics?.maxDuration).toBeGreaterThanOrEqual(metrics?.minDuration ?? 0);
   });
 });

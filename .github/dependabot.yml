@@ -34,7 +34,7 @@ updates:
     commit-message:
       prefix: 'chore(deps)'
     reviewers:
-      - pegasusheavy/leaven-maintainers
+      - quinnjr
 
   # GitHub Actions
   - package-ecosystem: github-actions
@@ -51,4 +51,4 @@ updates:
     commit-message:
       prefix: 'chore(ci)'
     reviewers:
-      - pegasusheavy/leaven-maintainers
+      - quinnjr

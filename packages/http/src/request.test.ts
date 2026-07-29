@@ -1,12 +1,30 @@
 /**
  * @leaven-graphql/http - Request parsing tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
-import { describe, test, expect } from 'bun:test';
-import { parseBody, parseQuery, validateRequest } from './request';
+import { describe, test, expect, afterEach } from 'bun:test';
+import { parseBody, parseQuery, validateRequest, type ParsedBody } from './request';
+
+/**
+ * Build a graphql-multipart-request-spec POST carrying one file under key `0`
+ */
+function multipartRequest(
+  operations: Record<string, unknown>,
+  map: Record<string, string[]>
+): Request {
+  const formData = new FormData();
+  formData.append('operations', JSON.stringify(operations));
+  formData.append('map', JSON.stringify(map));
+  formData.append('0', new File(['file content'], 'upload.txt', { type: 'text/plain' }));
+
+  return new Request('http://localhost/graphql', {
+    method: 'POST',
+    body: formData,
+  });
+}
 
 describe('parseBody', () => {
   test('should parse JSON body', async () => {
@@ -99,6 +117,28 @@ describe('parseBody', () => {
     expect(result.query).toBe('{ hello }');
   });
 
+  test('should map an uploaded file onto the operation variables', async () => {
+    const result = await parseBody(
+      multipartRequest(
+        { query: '{ hello }', variables: { file: null } },
+        { '0': ['variables.file'] }
+      )
+    );
+
+    const file = result.variables?.file;
+    expect(file).toBeInstanceOf(Blob);
+    expect(await (file as Blob).text()).toBe('file content');
+  });
+
+  test('should create missing intermediates along a mapped file path', async () => {
+    const result = await parseBody(
+      multipartRequest({ query: '{ hello }' }, { '0': ['variables.input.file'] })
+    );
+
+    const input = result.variables?.input as Record<string, unknown>;
+    expect(await (input.file as Blob).text()).toBe('file content');
+  });
+
   test('should parse application/x-www-form-urlencoded body', async () => {
     const request = new Request('http://localhost/graphql', {
       method: 'POST',
@@ -136,8 +176,8 @@ describe('parseBody', () => {
       body: 'not supported',
     });
 
-    // Falls back to JSON parsing which fails
-    await expect(parseBody(request)).rejects.toThrow(/Invalid JSON/);
+    // Falls back to JSON parsing, which fails, surfacing the intended message
+    await expect(parseBody(request)).rejects.toThrow(/Unsupported content type/);
   });
 
   test('should fallback to JSON for unknown content type with valid JSON', async () => {
@@ -149,6 +189,62 @@ describe('parseBody', () => {
 
     const result = await parseBody(request);
 
+    expect(result.query).toBe('{ hello }');
+  });
+});
+
+describe('multipart file path safety', () => {
+  afterEach(() => {
+    // A failing guard would poison every object in the process, so make sure
+    // one broken assertion cannot cascade into unrelated tests.
+    delete (Object.prototype as Record<string, unknown>).polluted;
+  });
+
+  /** Read the key an attack would have planted on the shared prototype */
+  function prototypeLeak(): unknown {
+    return ({} as Record<string, unknown>).polluted;
+  }
+
+  test('should not reach Object.prototype through a __proto__ root', async () => {
+    await parseBody(
+      multipartRequest({ query: '{ hello }' }, { '0': ['__proto__.polluted'] })
+    );
+
+    expect(prototypeLeak()).toBeUndefined();
+    expect(
+      Object.prototype.hasOwnProperty.call(Object.prototype, 'polluted')
+    ).toBe(false);
+  });
+
+  test('should not reach Object.prototype through a nested __proto__ segment', async () => {
+    const result = await parseBody(
+      multipartRequest(
+        { query: '{ hello }', variables: {} },
+        { '0': ['variables.__proto__.polluted'] }
+      )
+    );
+
+    expect(prototypeLeak()).toBeUndefined();
+    expect(result.variables).toEqual({});
+  });
+
+  test('should not reach Object.prototype through constructor.prototype', async () => {
+    await parseBody(
+      multipartRequest(
+        { query: '{ hello }', variables: {} },
+        { '0': ['variables.constructor.prototype.polluted'] }
+      )
+    );
+
+    expect(prototypeLeak()).toBeUndefined();
+  });
+
+  test('should ignore a path whose root is not a spec-legal target', async () => {
+    const result = await parseBody(
+      multipartRequest({ query: '{ hello }' }, { '0': ['query'] })
+    );
+
+    // The query must survive: a rogue path is dropped, not applied.
     expect(result.query).toBe('{ hello }');
   });
 });
@@ -195,6 +291,16 @@ describe('validateRequest', () => {
 
     expect(result.valid).toBe(true);
     expect(result.request?.query).toBe('{ hello }');
+  });
+
+  test('should accept a body on its own', () => {
+    const body: ParsedBody = { query: '{ hello }', operationName: 'Test' };
+
+    const result = validateRequest(body);
+
+    expect(result.valid).toBe(true);
+    expect(result.request?.query).toBe('{ hello }');
+    expect(result.request?.operationName).toBe('Test');
   });
 
   test('should merge body and query params', () => {

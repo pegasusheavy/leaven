@@ -1,9 +1,11 @@
 /**
  * @leaven-graphql/playground - GraphQL Playground rendering
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
+
+import { escapeHtml, toScriptJson } from './escape';
 
 /**
  * Playground theme
@@ -104,33 +106,21 @@ export function renderPlayground(config: PlaygroundConfig): string {
   <script>
     window.addEventListener('load', function() {
       GraphQLPlayground.init(document.getElementById('root'), {
-        endpoint: ${JSON.stringify(endpoint)},
-        ${subscriptionEndpoint ? `subscriptionEndpoint: ${JSON.stringify(subscriptionEndpoint)},` : ''}
-        settings: ${JSON.stringify(playgroundSettings)},
+        endpoint: ${toScriptJson(endpoint)},
+        ${subscriptionEndpoint ? `subscriptionEndpoint: ${toScriptJson(subscriptionEndpoint)},` : ''}
+        settings: ${toScriptJson(playgroundSettings)},
         tabs: [{
-          endpoint: ${JSON.stringify(endpoint)},
-          ${subscriptionEndpoint ? `subscriptionEndpoint: ${JSON.stringify(subscriptionEndpoint)},` : ''}
-          query: ${JSON.stringify(defaultQuery)},
-          variables: ${JSON.stringify(defaultVariables)},
-          headers: ${JSON.stringify(headers)},
+          endpoint: ${toScriptJson(endpoint)},
+          ${subscriptionEndpoint ? `subscriptionEndpoint: ${toScriptJson(subscriptionEndpoint)},` : ''}
+          query: ${toScriptJson(defaultQuery)},
+          variables: ${toScriptJson(defaultVariables)},
+          headers: ${toScriptJson(headers)},
         }],
       });
     });
   </script>
 </body>
 </html>`;
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 /**

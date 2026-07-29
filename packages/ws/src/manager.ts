@@ -1,12 +1,17 @@
 /**
  * @leaven-graphql/ws - Subscription manager
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import type { GraphQLSchema } from 'graphql';
-import { LeavenExecutor, type GraphQLRequest, type GraphQLResponse } from '@leaven-graphql/core';
+import {
+  LeavenExecutor,
+  type ExecutorConfig,
+  type GraphQLRequest,
+  type GraphQLResponse,
+} from '@leaven-graphql/core';
 
 /**
  * Subscription status
@@ -43,6 +48,21 @@ export interface SubscriptionManagerConfig {
   maxSubscriptionsPerConnection?: number;
   /** Subscription timeout in milliseconds */
   subscriptionTimeout?: number;
+  /**
+   * How operations are executed.
+   *
+   * - An existing {@link LeavenExecutor}: reuse it. Preferred when the process
+   *   already has one (an HTTP transport, say) — a second executor re-prints
+   *   the whole SDL to build its validation fingerprint and keeps its own
+   *   document and compiled-query caches, so sharing halves both.
+   * - An {@link ExecutorConfig} without `schema`: build an executor with these
+   *   options. Without this, subscriptions — the longest-lived transport —
+   *   silently run on executor defaults and cannot inherit
+   *   `introspection: false`, `maxDepth`, `maxComplexity` or a shared cache.
+   *
+   * Defaults to a new executor configured with `schema` alone.
+   */
+  executor?: LeavenExecutor | Omit<ExecutorConfig, 'schema'>;
 }
 
 /**
@@ -50,17 +70,41 @@ export interface SubscriptionManagerConfig {
  */
 export class SubscriptionManager {
   private readonly executor: LeavenExecutor;
-  private readonly subscriptions: Map<string, Subscription>;
-  private readonly connectionSubscriptions: Map<string, Set<string>>;
+  /**
+   * Subscriptions grouped by connection: `connectionId -> subscriptionId ->
+   * Subscription`.
+   *
+   * The nesting is load-bearing, not a convenience. graphql-ws operation ids
+   * are unique only WITHIN a connection — reference clients use a
+   * per-connection counter starting at `"1"` — so a flat map keyed on the
+   * client-supplied id alone lets one connection's subscribe clobber
+   * another's, and one connection's `complete` tear another's down.
+   */
+  private readonly connections: Map<string, Map<string, Subscription>>;
   private readonly maxSubscriptionsPerConnection: number;
   private readonly subscriptionTimeout: number;
 
   constructor(config: SubscriptionManagerConfig) {
-    this.executor = new LeavenExecutor({ schema: config.schema });
-    this.subscriptions = new Map();
-    this.connectionSubscriptions = new Map();
+    this.executor =
+      config.executor instanceof LeavenExecutor
+        ? config.executor
+        : new LeavenExecutor({ ...config.executor, schema: config.schema });
+    this.connections = new Map();
     this.maxSubscriptionsPerConnection = config.maxSubscriptionsPerConnection ?? 100;
     this.subscriptionTimeout = config.subscriptionTimeout ?? 0;
+  }
+
+  /**
+   * Execute a single-result operation (query or mutation) on the same
+   * executor that serves subscriptions, so both transports honour the same
+   * limits and share the same caches.
+   */
+  public async execute<TContext = unknown>(
+    request: GraphQLRequest,
+    context?: TContext
+  ): Promise<GraphQLResponse> {
+    const { response } = await this.executor.execute(request, context);
+    return response;
   }
 
   /**
@@ -76,8 +120,8 @@ export class SubscriptionManager {
     onError: (errors: readonly { message: string }[]) => void
   ): Promise<Subscription> {
     // Check subscription limit
-    const connectionSubs = this.connectionSubscriptions.get(connectionId);
-    if (connectionSubs && connectionSubs.size >= this.maxSubscriptionsPerConnection) {
+    const existing = this.connections.get(connectionId);
+    if (existing && existing.size >= this.maxSubscriptionsPerConnection) {
       throw new Error('Maximum subscriptions per connection reached');
     }
 
@@ -90,24 +134,25 @@ export class SubscriptionManager {
       createdAt: Date.now(),
     };
 
-    this.subscriptions.set(subscriptionId, subscription);
-
-    // Track connection subscriptions
-    if (!this.connectionSubscriptions.has(connectionId)) {
-      this.connectionSubscriptions.set(connectionId, new Set());
+    // Track under this connection only: an identical id on another connection
+    // is a different subscription
+    let connectionSubs = existing;
+    if (!connectionSubs) {
+      connectionSubs = new Map();
+      this.connections.set(connectionId, connectionSubs);
     }
-    this.connectionSubscriptions.get(connectionId)!.add(subscriptionId);
+    connectionSubs.set(subscriptionId, subscription);
 
     try {
       // Execute the subscription
       const result = await this.executor.subscribe(request, context);
 
-      // Check if it's an error result
-      if ('errors' in result && !Symbol.asyncIterator) {
+      // Check if it's an error result (a plain response object, not an async iterable)
+      if (!(Symbol.asyncIterator in Object(result))) {
         subscription.status = 'error';
         const errors = (result as GraphQLResponse).errors ?? [{ message: 'Subscription failed' }];
         onError(errors);
-        this.unsubscribe(subscriptionId);
+        this.unsubscribe(connectionId, subscriptionId);
         return subscription;
       }
 
@@ -120,7 +165,32 @@ export class SubscriptionManager {
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       if (this.subscriptionTimeout > 0) {
         timeoutId = setTimeout(() => {
-          this.unsubscribe(subscriptionId);
+          // This runs on the timer stack, where there is no caller to catch:
+          // an `onComplete` that throws (it sends on the socket and invokes a
+          // user-supplied hook) would become an uncaught exception and take
+          // down every other connection, and would also skip the teardown
+          // below, leaking the subscription.
+          try {
+            // Notify the client before tearing down so the subscription does
+            // not vanish silently: mark it completed and emit a Complete frame.
+            const timedOut = this.getSubscription(connectionId, subscriptionId);
+            if (timedOut && timedOut.status === 'active') {
+              timedOut.status = 'completed';
+              // The client sees a plain `complete` either way, so log here to
+              // keep a timeout distinguishable from a natural completion.
+              console.warn(
+                `Subscription ${subscriptionId} timed out after ${this.subscriptionTimeout}ms`
+              );
+              onComplete();
+            }
+          } catch (error) {
+            console.error(
+              `Error completing timed-out subscription ${subscriptionId}:`,
+              error
+            );
+          } finally {
+            this.unsubscribe(connectionId, subscriptionId);
+          }
         }, this.subscriptionTimeout);
       }
 
@@ -131,14 +201,21 @@ export class SubscriptionManager {
       };
 
       // Start consuming the iterator
-      this.consumeIterator(subscriptionId, iterator, onNext, onComplete, onError);
+      this.consumeIterator(
+        connectionId,
+        subscriptionId,
+        iterator,
+        onNext,
+        onComplete,
+        onError
+      );
 
       return subscription;
     } catch (error) {
       subscription.status = 'error';
       const message = error instanceof Error ? error.message : 'Subscription failed';
       onError([{ message }]);
-      this.unsubscribe(subscriptionId);
+      this.unsubscribe(connectionId, subscriptionId);
       return subscription;
     }
   }
@@ -147,6 +224,7 @@ export class SubscriptionManager {
    * Consume an async iterator and call callbacks
    */
   private async consumeIterator(
+    connectionId: string,
     subscriptionId: string,
     iterator: AsyncIterableIterator<GraphQLResponse>,
     onNext: (result: GraphQLResponse) => void,
@@ -155,7 +233,7 @@ export class SubscriptionManager {
   ): Promise<void> {
     try {
       for await (const result of iterator) {
-        const subscription = this.subscriptions.get(subscriptionId);
+        const subscription = this.getSubscription(connectionId, subscriptionId);
         if (!subscription || subscription.status !== 'active') {
           break;
         }
@@ -163,29 +241,34 @@ export class SubscriptionManager {
         onNext(result);
       }
 
-      const subscription = this.subscriptions.get(subscriptionId);
+      const subscription = this.getSubscription(connectionId, subscriptionId);
       if (subscription) {
         subscription.status = 'completed';
         onComplete();
-        this.unsubscribe(subscriptionId);
+        this.unsubscribe(connectionId, subscriptionId);
       }
     } catch (error) {
-      const subscription = this.subscriptions.get(subscriptionId);
+      const subscription = this.getSubscription(connectionId, subscriptionId);
       if (subscription) {
         subscription.status = 'error';
         const message = error instanceof Error ? error.message : 'Subscription error';
         onError([{ message }]);
-        this.unsubscribe(subscriptionId);
+        this.unsubscribe(connectionId, subscriptionId);
       }
     }
   }
 
   /**
-   * Unsubscribe from a subscription
+   * Unsubscribe from a subscription.
+   *
+   * Both identifiers are required: a subscription id is only unique within
+   * its connection, so a lookup by id alone would tear down whichever
+   * connection happened to register that id last.
    */
-  public unsubscribe(subscriptionId: string): boolean {
-    const subscription = this.subscriptions.get(subscriptionId);
-    if (!subscription) {
+  public unsubscribe(connectionId: string, subscriptionId: string): boolean {
+    const connectionSubs = this.connections.get(connectionId);
+    const subscription = connectionSubs?.get(subscriptionId);
+    if (!connectionSubs || !subscription) {
       return false;
     }
 
@@ -198,14 +281,9 @@ export class SubscriptionManager {
     }
 
     // Remove from maps
-    this.subscriptions.delete(subscriptionId);
-
-    const connectionSubs = this.connectionSubscriptions.get(subscription.connectionId);
-    if (connectionSubs) {
-      connectionSubs.delete(subscriptionId);
-      if (connectionSubs.size === 0) {
-        this.connectionSubscriptions.delete(subscription.connectionId);
-      }
+    connectionSubs.delete(subscriptionId);
+    if (connectionSubs.size === 0) {
+      this.connections.delete(connectionId);
     }
 
     return true;
@@ -215,14 +293,15 @@ export class SubscriptionManager {
    * Unsubscribe all subscriptions for a connection
    */
   public unsubscribeConnection(connectionId: string): number {
-    const connectionSubs = this.connectionSubscriptions.get(connectionId);
+    const connectionSubs = this.connections.get(connectionId);
     if (!connectionSubs) {
       return 0;
     }
 
     let count = 0;
-    for (const subscriptionId of connectionSubs) {
-      if (this.unsubscribe(subscriptionId)) {
+    // Snapshot the ids: unsubscribe mutates the map being iterated
+    for (const subscriptionId of [...connectionSubs.keys()]) {
+      if (this.unsubscribe(connectionId, subscriptionId)) {
         count++;
       }
     }
@@ -231,52 +310,49 @@ export class SubscriptionManager {
   }
 
   /**
-   * Get a subscription by ID
+   * Get a subscription by connection and subscription ID
    */
-  public getSubscription(subscriptionId: string): Subscription | undefined {
-    return this.subscriptions.get(subscriptionId);
+  public getSubscription(
+    connectionId: string,
+    subscriptionId: string
+  ): Subscription | undefined {
+    return this.connections.get(connectionId)?.get(subscriptionId);
   }
 
   /**
    * Get all subscriptions for a connection
    */
   public getConnectionSubscriptions(connectionId: string): Subscription[] {
-    const subscriptionIds = this.connectionSubscriptions.get(connectionId);
-    if (!subscriptionIds) {
-      return [];
-    }
-
-    const subscriptions: Subscription[] = [];
-    for (const id of subscriptionIds) {
-      const sub = this.subscriptions.get(id);
-      if (sub) {
-        subscriptions.push(sub);
-      }
-    }
-
-    return subscriptions;
+    const connectionSubs = this.connections.get(connectionId);
+    return connectionSubs ? [...connectionSubs.values()] : [];
   }
 
   /**
-   * Get the total number of active subscriptions
+   * Get the total number of tracked subscriptions (any status:
+   * 'pending' | 'active' | 'completed' | 'error')
    */
   public get subscriptionCount(): number {
-    return this.subscriptions.size;
+    let total = 0;
+    for (const connectionSubs of this.connections.values()) {
+      total += connectionSubs.size;
+    }
+    return total;
   }
 
   /**
    * Get the number of active connections
    */
   public get connectionCount(): number {
-    return this.connectionSubscriptions.size;
+    return this.connections.size;
   }
 
   /**
    * Clear all subscriptions
    */
   public clear(): void {
-    for (const subscriptionId of this.subscriptions.keys()) {
-      this.unsubscribe(subscriptionId);
+    // Snapshot the connection ids: unsubscribeConnection mutates the map
+    for (const connectionId of [...this.connections.keys()]) {
+      this.unsubscribeConnection(connectionId);
     }
   }
 }

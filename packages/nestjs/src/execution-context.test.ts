@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/nestjs - Execution Context tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -10,6 +10,7 @@ import type { ExecutionContext } from '@nestjs/common';
 import type { GraphQLResolveInfo } from 'graphql';
 import {
   GqlExecutionContext,
+  GQL_RESOLVER_ARGS,
   getGqlContext,
   getGqlArgs,
   getGqlInfo,
@@ -298,6 +299,53 @@ describe('GqlExecutionContext', () => {
 
       expect(gqlContext.getPath()).toEqual([]);
     });
+
+    test('should omit numeric list indices so join() keys stay stable', () => {
+      const context = createMockContext({
+        info: {
+          path: {
+            key: 'email',
+            prev: { key: 3, prev: { key: 'users', prev: undefined } },
+          },
+        } as any,
+      });
+      const gqlContext = GqlExecutionContext.create(context);
+
+      expect(gqlContext.getPath()).toEqual(['users', 'email']);
+      expect(gqlContext.getPath().join('.')).toBe('users.email');
+    });
+  });
+
+  describe('getFullPath', () => {
+    test('should return the field path', () => {
+      const context = createMockContext();
+      const gqlContext = GqlExecutionContext.create(context);
+
+      expect(gqlContext.getFullPath()).toEqual(['testField']);
+    });
+
+    test('should return empty array when no path', () => {
+      const context = createMockContext({
+        info: {} as any,
+      });
+      const gqlContext = GqlExecutionContext.create(context);
+
+      expect(gqlContext.getFullPath()).toEqual([]);
+    });
+
+    test('should include numeric list indices as number segments', () => {
+      const context = createMockContext({
+        info: {
+          path: {
+            key: 'email',
+            prev: { key: 3, prev: { key: 'users', prev: undefined } },
+          },
+        } as any,
+      });
+      const gqlContext = GqlExecutionContext.create(context);
+
+      expect(gqlContext.getFullPath()).toEqual(['users', 3, 'email']);
+    });
   });
 
   describe('getSelectedFields', () => {
@@ -317,6 +365,193 @@ describe('GqlExecutionContext', () => {
       const gqlContext = GqlExecutionContext.create(context);
 
       expect(gqlContext.getSelectedFields()).toEqual([]);
+    });
+
+    test('should resolve fields requested via fragment spreads', () => {
+      const context = createMockContext({
+        info: {
+          fieldNodes: [
+            {
+              kind: 'Field',
+              name: { kind: 'Name', value: 'user' },
+              selectionSet: {
+                kind: 'SelectionSet',
+                selections: [
+                  { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                  { kind: 'FragmentSpread', name: { kind: 'Name', value: 'UserFields' } },
+                ],
+              },
+            },
+          ],
+          fragments: {
+            UserFields: {
+              kind: 'FragmentDefinition',
+              name: { kind: 'Name', value: 'UserFields' },
+              selectionSet: {
+                kind: 'SelectionSet',
+                selections: [
+                  { kind: 'Field', name: { kind: 'Name', value: 'email' } },
+                  { kind: 'Field', name: { kind: 'Name', value: 'role' } },
+                ],
+              },
+            },
+          },
+        } as any,
+      });
+      const gqlContext = GqlExecutionContext.create(context);
+
+      const fields = gqlContext.getSelectedFields();
+      expect(fields).toContain('id');
+      expect(fields).toContain('email');
+      expect(fields).toContain('role');
+    });
+
+    test('should resolve fields requested via inline fragments', () => {
+      const context = createMockContext({
+        info: {
+          fieldNodes: [
+            {
+              kind: 'Field',
+              name: { kind: 'Name', value: 'node' },
+              selectionSet: {
+                kind: 'SelectionSet',
+                selections: [
+                  { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                  {
+                    kind: 'InlineFragment',
+                    selectionSet: {
+                      kind: 'SelectionSet',
+                      selections: [
+                        { kind: 'Field', name: { kind: 'Name', value: 'secret' } },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        } as any,
+      });
+      const gqlContext = GqlExecutionContext.create(context);
+
+      const fields = gqlContext.getSelectedFields();
+      expect(fields).toContain('id');
+      expect(fields).toContain('secret');
+    });
+
+    test('should terminate on cyclic fragment spreads', () => {
+      const context = createMockContext({
+        info: {
+          fieldNodes: [
+            {
+              kind: 'Field',
+              name: { kind: 'Name', value: 'user' },
+              selectionSet: {
+                kind: 'SelectionSet',
+                selections: [
+                  { kind: 'FragmentSpread', name: { kind: 'Name', value: 'A' } },
+                ],
+              },
+            },
+          ],
+          fragments: {
+            A: {
+              kind: 'FragmentDefinition',
+              name: { kind: 'Name', value: 'A' },
+              selectionSet: {
+                kind: 'SelectionSet',
+                selections: [
+                  { kind: 'Field', name: { kind: 'Name', value: 'fromA' } },
+                  { kind: 'FragmentSpread', name: { kind: 'Name', value: 'B' } },
+                ],
+              },
+            },
+            B: {
+              kind: 'FragmentDefinition',
+              name: { kind: 'Name', value: 'B' },
+              selectionSet: {
+                kind: 'SelectionSet',
+                selections: [
+                  { kind: 'Field', name: { kind: 'Name', value: 'fromB' } },
+                  { kind: 'FragmentSpread', name: { kind: 'Name', value: 'A' } },
+                ],
+              },
+            },
+          },
+        } as any,
+      });
+      const gqlContext = GqlExecutionContext.create(context);
+
+      const fields = gqlContext.getSelectedFields();
+      expect(fields).toContain('fromA');
+      expect(fields).toContain('fromB');
+    });
+
+    test('should merge selections across all field nodes without duplicates', () => {
+      const context = createMockContext({
+        info: {
+          fieldNodes: [
+            {
+              kind: 'Field',
+              name: { kind: 'Name', value: 'user' },
+              selectionSet: {
+                kind: 'SelectionSet',
+                selections: [
+                  { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                ],
+              },
+            },
+            {
+              kind: 'Field',
+              name: { kind: 'Name', value: 'user' },
+              selectionSet: {
+                kind: 'SelectionSet',
+                selections: [
+                  { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                  { kind: 'Field', name: { kind: 'Name', value: 'name' } },
+                ],
+              },
+            },
+          ],
+        } as any,
+      });
+      const gqlContext = GqlExecutionContext.create(context);
+
+      expect(gqlContext.getSelectedFields().sort()).toEqual(['id', 'name']);
+    });
+
+    test('should ignore fragment spreads with no matching fragment definition', () => {
+      const context = createMockContext({
+        info: {
+          fieldNodes: [
+            {
+              kind: 'Field',
+              name: { kind: 'Name', value: 'user' },
+              selectionSet: {
+                kind: 'SelectionSet',
+                selections: [
+                  { kind: 'Field', name: { kind: 'Name', value: 'id' } },
+                  { kind: 'FragmentSpread', name: { kind: 'Name', value: 'Missing' } },
+                ],
+              },
+            },
+          ],
+        } as any,
+      });
+      const gqlContext = GqlExecutionContext.create(context);
+
+      expect(gqlContext.getSelectedFields()).toEqual(['id']);
+    });
+  });
+});
+
+describe('GQL_RESOLVER_ARGS', () => {
+  test('should map the positional resolver arguments (root, args, context, info)', () => {
+    expect(GQL_RESOLVER_ARGS).toEqual({
+      ROOT: 0,
+      ARGS: 1,
+      CONTEXT: 2,
+      INFO: 3,
     });
   });
 });

@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/ws - PubSub implementation
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -34,6 +34,14 @@ export interface PubSubConfig {
   maxSubscribersPerTopic?: number;
   /** Enable topic wildcards */
   wildcards?: boolean;
+  /**
+   * Maximum number of payloads buffered by an `asyncIterator` while no
+   * consumer is pulling. When the buffer is full, the OLDEST payload is
+   * dropped to make room for the newest (drop-oldest policy), so a slow
+   * consumer sees the most recent events rather than growing the queue
+   * without bound. Unlimited by default.
+   */
+  maxQueueSize?: number;
 }
 
 /**
@@ -49,14 +57,19 @@ interface Subscriber<T = unknown> {
  */
 export class PubSub implements PubSubEngine {
   private readonly subscribers: Map<string, Set<Subscriber>>;
+  /** Wildcard patterns, pre-split at subscribe time (pattern -> parts) */
+  private readonly wildcardPatterns: Map<string, string[]>;
   private readonly maxSubscribersPerTopic: number;
   private readonly wildcards: boolean;
+  private readonly maxQueueSize: number;
   private nextId: number;
 
   constructor(config: PubSubConfig = {}) {
     this.subscribers = new Map();
+    this.wildcardPatterns = new Map();
     this.maxSubscribersPerTopic = config.maxSubscribersPerTopic ?? 10000;
     this.wildcards = config.wildcards ?? false;
+    this.maxQueueSize = config.maxQueueSize ?? Infinity;
     this.nextId = 0;
   }
 
@@ -72,6 +85,14 @@ export class PubSub implements PubSubEngine {
     if (!topicSubscribers) {
       topicSubscribers = new Set();
       this.subscribers.set(topic, topicSubscribers);
+
+      // Split the pattern once at subscribe time so publishes never re-split
+      if (this.wildcards) {
+        const parts = topic.split('.');
+        if (parts.some((part) => part === '*' || part === '#')) {
+          this.wildcardPatterns.set(topic, parts);
+        }
+      }
     }
 
     if (topicSubscribers.size >= this.maxSubscribersPerTopic) {
@@ -85,11 +106,22 @@ export class PubSub implements PubSubEngine {
 
     topicSubscribers.add(subscriber as Subscriber);
 
+    // The Set captured here can stop being the one registered for `topic`:
+    // once its last subscriber leaves, the entry is dropped and a later
+    // subscriber installs a FRESH Set. A stale or repeated call to this
+    // unsubscribe function must not touch that new Set — otherwise it would
+    // evict another client's subscription — so verify identity first.
+    const registeredSubscribers = topicSubscribers;
+
     // Return unsubscribe function
     return () => {
-      topicSubscribers!.delete(subscriber as Subscriber);
-      if (topicSubscribers!.size === 0) {
+      if (this.subscribers.get(topic) !== registeredSubscribers) {
+        return;
+      }
+      registeredSubscribers.delete(subscriber as Subscriber);
+      if (registeredSubscribers.size === 0) {
         this.subscribers.delete(topic);
+        this.wildcardPatterns.delete(topic);
       }
     };
   }
@@ -111,7 +143,7 @@ export class PubSub implements PubSubEngine {
     }
 
     // Handle wildcards if enabled
-    if (this.wildcards) {
+    if (this.wildcards && this.wildcardPatterns.size > 0) {
       this.publishToWildcards(topic, payload);
     }
   }
@@ -120,10 +152,21 @@ export class PubSub implements PubSubEngine {
    * Publish to wildcard subscribers
    */
   private publishToWildcards<T>(topic: string, payload: T): void {
-    const parts = topic.split('.');
+    const topicParts = topic.split('.');
 
-    for (const [subscriberTopic, subscribers] of this.subscribers) {
-      if (this.matchesWildcard(subscriberTopic, parts)) {
+    for (const [pattern, patternParts] of this.wildcardPatterns) {
+      // Skip patterns identical to the published topic: those subscribers
+      // were already served by the exact-match pass in publish()
+      if (pattern === topic) {
+        continue;
+      }
+
+      if (this.matchesWildcard(patternParts, topicParts)) {
+        const subscribers = this.subscribers.get(pattern);
+        if (!subscribers) {
+          continue;
+        }
+
         for (const subscriber of subscribers) {
           try {
             subscriber.callback(payload);
@@ -136,14 +179,12 @@ export class PubSub implements PubSubEngine {
   }
 
   /**
-   * Check if a topic pattern matches
+   * Check if a pre-split topic pattern matches
    */
-  private matchesWildcard(pattern: string, topicParts: string[]): boolean {
-    if (pattern === '*' || pattern === '#') {
+  private matchesWildcard(patternParts: string[], topicParts: string[]): boolean {
+    if (patternParts.length === 1 && (patternParts[0] === '*' || patternParts[0] === '#')) {
       return true;
     }
-
-    const patternParts = pattern.split('.');
 
     for (let i = 0; i < patternParts.length; i++) {
       const part = patternParts[i];
@@ -176,6 +217,7 @@ export class PubSub implements PubSubEngine {
     let done = false;
 
     const unsubscribes: Array<() => void> = [];
+    const maxQueueSize = this.maxQueueSize;
 
     const pushValue = (payload: T): void => {
       if (done) return;
@@ -184,6 +226,11 @@ export class PubSub implements PubSubEngine {
         const resolve = pullQueue.shift()!;
         resolve({ value: payload, done: false });
       } else {
+        // Drop-oldest policy: when the buffer is full, evict the oldest
+        // payload so the queue cannot grow without bound
+        if (pushQueue.length >= maxQueueSize) {
+          pushQueue.shift();
+        }
         pushQueue.push(payload);
       }
     };
@@ -213,11 +260,19 @@ export class PubSub implements PubSubEngine {
       },
 
       async return(): Promise<IteratorResult<T>> {
+        // Idempotent: consumers (and `for await` plus an explicit `return()`
+        // in a caller's `finally`) can close the same iterator twice, and the
+        // second teardown must not run the unsubscribes again.
+        if (done) {
+          return { value: undefined, done: true };
+        }
         done = true;
         for (const unsubscribe of unsubscribes) {
           unsubscribe();
         }
         pullQueue.forEach((resolve) => resolve({ value: undefined, done: true }));
+        pullQueue.length = 0;
+        pushQueue.length = 0;
         return { value: undefined, done: true };
       },
 
@@ -226,6 +281,13 @@ export class PubSub implements PubSubEngine {
         for (const unsubscribe of unsubscribes) {
           unsubscribe();
         }
+        // Settle pending pulls BEFORE dropping them: a consumer suspended in
+        // `await next()` would otherwise wait on a promise that can never
+        // resolve, so its `for await` loop (and any `finally` cleanup) would
+        // never run.
+        pullQueue.forEach((resolve) => resolve({ value: undefined, done: true }));
+        pullQueue.length = 0;
+        pushQueue.length = 0;
         throw error;
       },
     };
@@ -250,6 +312,7 @@ export class PubSub implements PubSubEngine {
    */
   public clear(): void {
     this.subscribers.clear();
+    this.wildcardPatterns.clear();
   }
 }
 

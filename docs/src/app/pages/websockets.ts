@@ -75,8 +75,23 @@ import { SeoService } from '../services/seo.service';
       <!-- Authentication -->
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Authentication</h2>
-        <p class="text-zinc-400 mb-4">Authenticate WebSocket connections:</p>
+        <p class="text-zinc-400 mb-4">
+          Authenticate WebSocket connections in the <code class="text-green-400">onConnect</code> hook —
+          returning <code class="text-green-400">false</code> rejects the connection:
+        </p>
         <app-code-block [code]="authCode" title="auth.ts" />
+      </section>
+
+      <!-- Protocol Messages -->
+      <section class="mb-12">
+        <h2 class="text-2xl font-semibold text-white mb-4">Protocol Messages</h2>
+        <p class="text-zinc-400 mb-4">
+          If you drive the protocol yourself, the message helpers are exported directly. The
+          <code class="text-green-400">create*</code> factories return message
+          <strong class="text-white">objects</strong>, so pass them through
+          <code class="text-green-400">formatMessage</code> before sending:
+        </p>
+        <app-code-block [code]="protocolCode" title="protocol.ts" />
       </section>
 
       <!-- Schema -->
@@ -106,6 +121,21 @@ import { SeoService } from '../services/seo.service';
             </thead>
             <tbody class="text-zinc-400">
               <tr class="border-b border-zinc-800/50">
+                <td class="py-3 pr-4"><code class="text-green-400">createWebSocketHandler</code></td>
+                <td class="py-3">Create a WebSocketHandler that speaks the full protocol</td>
+              </tr>
+              <tr class="border-b border-zinc-800/50">
+                <td class="py-3 pr-4"><code class="text-green-400">WebSocketHandler</code></td>
+                <td class="py-3">
+                  Handler class; <code class="text-green-400">getWebSocketConfig()</code> returns Bun's
+                  open/message/close callbacks
+                </td>
+              </tr>
+              <tr class="border-b border-zinc-800/50">
+                <td class="py-3 pr-4"><code class="text-green-400">createSubscriptionManager</code></td>
+                <td class="py-3">Track subscriptions per connection; accepts a shared executor</td>
+              </tr>
+              <tr class="border-b border-zinc-800/50">
                 <td class="py-3 pr-4"><code class="text-green-400">PubSub</code></td>
                 <td class="py-3">Event publishing/subscription system</td>
               </tr>
@@ -115,15 +145,18 @@ import { SeoService } from '../services/seo.service';
               </tr>
               <tr class="border-b border-zinc-800/50">
                 <td class="py-3 pr-4"><code class="text-green-400">parseMessage</code></td>
-                <td class="py-3">Parse graphql-ws protocol messages</td>
+                <td class="py-3">
+                  Parse graphql-ws messages; <code class="text-green-400">{{ '{' }} requireId {{ '}' }}</code>
+                  defaults to <code class="text-green-400">true</code>
+                </td>
               </tr>
               <tr class="border-b border-zinc-800/50">
                 <td class="py-3 pr-4"><code class="text-green-400">formatMessage</code></td>
-                <td class="py-3">Format messages for sending</td>
+                <td class="py-3">Serialize a message object for sending</td>
               </tr>
               <tr>
                 <td class="py-3 pr-4"><code class="text-green-400">createNextMessage</code></td>
-                <td class="py-3">Create a subscription data message</td>
+                <td class="py-3">Build a subscription data message object</td>
               </tr>
             </tbody>
           </table>
@@ -165,52 +198,65 @@ export class WebsocketsComponent implements OnInit {
       canonical: '/websockets',
       ogType: 'article'
     });
+
+    // Emit the JSON-LD counterpart of this page's TechArticle microdata,
+    // plus the breadcrumb trail rendered at the top of the article.
+    this.seoService.updateStructuredData([
+      this.seoService.generateTechArticleSchema({
+        title: 'WebSocket Subscriptions',
+        description: 'Implement real-time GraphQL subscriptions with @leaven-graphql/ws using the graphql-ws protocol and built-in PubSub.',
+        url: '/websockets'
+      }),
+      this.seoService.generateBreadcrumbSchema([
+        { name: 'Home', url: '/' },
+        { name: 'WebSocket Subscriptions', url: '/websockets' }
+      ])
+    ]);
   }
 
   installCode = `bun add @leaven-graphql/ws @leaven-graphql/core graphql`;
 
-  quickStartCode = `import { createPubSub } from '@leaven-graphql/ws';
-import { LeavenExecutor } from '@leaven-graphql/core';
+  quickStartCode = `import { createServer } from '@leaven-graphql/http';
+import { createPubSub, createWebSocketHandler } from '@leaven-graphql/ws';
 import { schema } from './schema';
 
 // Create PubSub instance
-const pubsub = createPubSub();
+export const pubsub = createPubSub();
 
-// Create executor with schema
-const executor = new LeavenExecutor({ schema });
+// The handler speaks the whole graphql-transport-ws protocol: connection_init,
+// subscribe, next, complete, ping/pong keep-alives and teardown.
+const websocket = createWebSocketHandler({
+  schema,
+  connectionInitTimeout: 3000,  // Default: 3000ms
+  keepAliveInterval: 12000,     // Default: 12000ms
+  context: (socket, request) => ({ connectionId: socket.data.connectionId, request }),
+});
 
-// Set up WebSocket server
-Bun.serve({
+// createServer upgrades GET requests to the GraphQL path that carry
+// "Upgrade: websocket" and routes them to the handler.
+const server = createServer({
+  schema,
   port: 4000,
-  fetch(request, server) {
-    // Upgrade to WebSocket for subscription requests
-    if (request.headers.get('upgrade') === 'websocket') {
-      server.upgrade(request);
-      return;
-    }
-    return new Response('Not Found', { status: 404 });
-  },
-  websocket: {
-    message(ws, message) {
-      // Handle graphql-ws protocol messages
-      handleMessage(ws, message, executor, pubsub);
-    },
-    close(ws) {
-      // Clean up subscriptions
-      cleanupConnection(ws);
-    },
-  },
-});`;
+  path: '/graphql',
+  websocket,
+});
+
+server.start();
+
+// Standalone Bun.serve instead? getWebSocketConfig() returns the
+// open/message/close callbacks Bun expects:
+// Bun.serve({ fetch, websocket: websocket.getWebSocketConfig() });`;
 
   pubsubCode = `import { PubSub, createPubSub } from '@leaven-graphql/ws';
 
 // Create with default config
 const pubsub = createPubSub();
 
-// Or with custom config
-const pubsub = createPubSub({
-  maxSubscribers: 1000,
-  wildcards: true,  // Enable topic wildcards
+// Or with custom config — PubSubConfig has exactly these three options
+const customPubSub = createPubSub({
+  maxSubscribersPerTopic: 1000,  // Default: 10000; subscribe() throws past it
+  wildcards: true,               // Enable dot-segmented topic wildcards
+  maxQueueSize: 100,             // asyncIterator buffer; drops OLDEST when full
 });
 
 // Subscribe to a topic
@@ -228,13 +274,24 @@ pubsub.publish('user:created', {
 // Unsubscribe when done
 unsubscribe();
 
-// Create async iterator for subscriptions
+// Wildcards (when enabled) split topics on '.': '*' matches one segment,
+// '#' matches the rest of the topic.
+customPubSub.subscribe('user.*.created', onAnyTenantUserCreated);
+customPubSub.subscribe('user.#', onAnyUserEvent);
+
+// Create an async iterator for subscriptions (one topic or several)
 const iterator = pubsub.asyncIterator('messages:new');
+const multi = pubsub.asyncIterator(['messages:new', 'messages:edited']);
 
 // Use in resolver
 for await (const message of iterator) {
   yield message;
-}`;
+}
+
+// Introspection helpers
+pubsub.getSubscriberCount('messages:new');
+pubsub.getTopics();
+pubsub.clear();`;
 
   resolversCode = `import { createPubSub } from '@leaven-graphql/ws';
 
@@ -285,68 +342,58 @@ const resolvers = {
   },
 };`;
 
-  authCode = `import { createPubSub, parseMessage } from '@leaven-graphql/ws';
+  authCode = `import { createWebSocketHandler } from '@leaven-graphql/ws';
 
-const pubsub = createPubSub();
-const connections = new Map();
-
-Bun.serve({
-  websocket: {
-    async message(ws, data) {
-      const message = parseMessage(data);
-
-      switch (message.type) {
-        case 'connection_init': {
-          // Authenticate the connection
-          const token = message.payload?.authToken;
-
-          try {
-            const user = await verifyToken(token);
-            connections.set(ws, { user, subscriptions: new Map() });
-
-            // Send connection acknowledgment
-            ws.send(JSON.stringify({ type: 'connection_ack' }));
-          } catch (error) {
-            // Reject connection
-            ws.close(4401, 'Unauthorized');
-          }
-          break;
-        }
-
-        case 'subscribe': {
-          const connection = connections.get(ws);
-          if (!connection) {
-            ws.close(4401, 'Unauthorized');
-            return;
-          }
-
-          // Handle subscription with authenticated user
-          handleSubscribe(ws, message, connection.user);
-          break;
-        }
-
-        case 'complete': {
-          // Client wants to stop subscription
-          const connection = connections.get(ws);
-          connection?.subscriptions.get(message.id)?.unsubscribe();
-          connection?.subscriptions.delete(message.id);
-          break;
-        }
-      }
-    },
-
-    close(ws) {
-      const connection = connections.get(ws);
-      if (connection) {
-        // Clean up all subscriptions
-        for (const sub of connection.subscriptions.values()) {
-          sub.unsubscribe();
-        }
-        connections.delete(ws);
-      }
-    },
+// Preferred: let the handler run the protocol and authenticate in onConnect.
+// Returning false rejects the connection with 4403 Forbidden.
+const websocket = createWebSocketHandler({
+  schema,
+  async onConnect(socket, params) {
+    const user = await verifyToken(params?.['authToken']);
+    if (!user) {
+      return false;
+    }
+    // Stash whatever later hooks need on the socket's connection params
+    socket.data.connectionParams = { ...params, userId: user.id };
+    return true;
+  },
+  context: (socket) => ({ user: socket.data.connectionParams?.['userId'] }),
+  onSubscribe: (socket, id, request) => {
+    console.log('subscribe', id, request.operationName);
+  },
+  onDisconnect: (socket) => {
+    console.log('closed', socket.data.connectionId);
   },
 });`;
+
+  protocolCode = `import {
+  MessageType,
+  parseMessage,
+  formatMessage,
+  createConnectionAck,
+  createNextMessage,
+  createErrorMessage,
+  createCompleteMessage,
+  createPongMessage,
+} from '@leaven-graphql/ws';
+
+// parseMessage(data, options). requireId defaults to true, which is correct
+// for a SERVER parsing client frames: subscribe/next/error/complete without a
+// routable id are rejected. Pass { requireId: false } on the CLIENT, where a
+// lenient peer may omit it and a throw would tear down the connection.
+const message = parseMessage(data);
+const lenient = parseMessage(data, { requireId: false });
+
+// The create* factories return message OBJECTS, not strings — pass them
+// through formatMessage before sending them over the socket.
+socket.send(formatMessage(createConnectionAck()));
+socket.send(formatMessage(createNextMessage(id, result.data, result.errors)));
+socket.send(formatMessage(createErrorMessage(id, [{ message: 'Boom' }])));
+socket.send(formatMessage(createCompleteMessage(id)));
+
+if (message.type === MessageType.Ping) {
+  socket.send(formatMessage(createPongMessage()));
+}`;
 
   schemaCode = `type Subscription {
   # Simple subscription

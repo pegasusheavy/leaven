@@ -21,12 +21,12 @@
  * export class AppModule {}
  * ```
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 // Module exports
-export { LeavenModule, LEAVEN_MODULE_OPTIONS, LEAVEN_DRIVER } from './module';
+export { LeavenModule, LEAVEN_MODULE_OPTIONS, LEAVEN_DRIVER, LEAVEN_PUBSUB } from './module';
 
 // Driver exports
 export { LeavenDriver, type HandlerResult } from './driver';
@@ -35,13 +35,18 @@ export { LeavenDriver, type HandlerResult } from './driver';
 export type {
   LeavenModuleOptions,
   LeavenModuleAsyncOptions,
+  LeavenModuleFactoryAsyncOptions,
+  LeavenModuleClassAsyncOptions,
+  LeavenModuleExistingAsyncOptions,
   LeavenOptionsFactory,
   BuildSchemaOptions,
   DirectiveDefinition,
   ContextFactory,
   FormatErrorFn,
   GraphQLFormattedError,
+  /** @deprecated Has no effect; removal target 0.3.0. */
   LeavenPlugin,
+  /** @deprecated Has no effect; removal target 0.3.0. */
   PluginContext,
   CorsOptions,
   GqlContext,
@@ -85,6 +90,8 @@ export {
   IS_PUBLIC_KEY,
   ROLES_KEY,
   PERMISSIONS_KEY,
+  LEAVEN_MAX_COMPLEXITY,
+  LEAVEN_MAX_DEPTH,
 } from './guards';
 
 // Interceptor exports
@@ -129,6 +136,8 @@ export {
   InjectPubSub,
   type SubscriptionConfig,
   type SubscriptionContext,
+  type SubscriptionSocket,
+  type BunWebSocketConfig,
   type SubscribeMessage,
   type CompleteMessage,
   type ExecutionArgs,

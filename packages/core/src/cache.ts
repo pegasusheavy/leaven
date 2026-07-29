@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/core - Document caching
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -16,11 +16,19 @@ export { isPromise, resolveValue } from './cache-interface';
  * Configuration for the document cache
  */
 export interface DocumentCacheConfig {
-  /** Maximum number of entries to cache (default: 1000) */
+  /**
+   * Maximum number of entries to cache (default: 1000).
+   * `0` (or any non-positive value) disables caching entirely — nothing is
+   * stored, so every lookup is a miss.
+   */
   maxSize?: number;
   /** TTL for cache entries in milliseconds (default: 0 = no expiry) */
   ttl?: number;
-  /** Enable LRU eviction (default: true) */
+  /**
+   * Enable LRU eviction (default: true).
+   * When false, `maxSize` is still enforced but entries are evicted in
+   * FIFO (insertion) order instead of least-recently-used order.
+   */
   lru?: boolean;
   /** Maximum query length to use as direct key (avoids hashing, default: 256) */
   directKeyMaxLength?: number;
@@ -36,7 +44,10 @@ export interface CacheEntry {
   validation?: CachedValidation;
   /** When this entry was created */
   createdAt: number;
-  /** Last access time for LRU */
+  /**
+   * Last access time (informational only — eviction order is tracked via
+   * the cache Map's insertion order, not this field)
+   */
   lastAccess: number;
   /** Number of times this entry was accessed */
   hits: number;
@@ -83,24 +94,30 @@ export class DocumentCache implements IDocumentCache {
   }
 
   /**
-   * Evict the least recently used entry
+   * Evict one entry to make room for a new one, in O(1).
+   *
+   * The cache Map's insertion order doubles as the eviction order: with LRU
+   * enabled, hits re-insert entries at the end of the Map, so the first key
+   * is the least recently used. With LRU disabled nothing is re-ordered, so
+   * the first key is simply the oldest insertion (FIFO). Either way,
+   * `maxSize` is always enforced.
    */
-  private evictLRU(): void {
-    if (!this.lru || this.cache.size === 0) return;
+  private evictOldest(): void {
+    if (this.cache.size === 0) return;
 
-    let oldestKey: string | null = null;
-    let oldestAccess = Infinity;
-
-    for (const [key, entry] of this.cache) {
-      if (entry.lastAccess < oldestAccess) {
-        oldestAccess = entry.lastAccess;
-        oldestKey = key;
-      }
-    }
-
-    if (oldestKey) {
+    const oldestKey = this.cache.keys().next().value;
+    if (oldestKey !== undefined) {
       this.cache.delete(oldestKey);
     }
+  }
+
+  /**
+   * Move an entry to the end of the Map so insertion order reflects recency.
+   * Only used when LRU eviction is enabled.
+   */
+  private touch(key: string, entry: CacheEntry): void {
+    this.cache.delete(key);
+    this.cache.set(key, entry);
   }
 
   /**
@@ -119,22 +136,33 @@ export class DocumentCache implements IDocumentCache {
       return null;
     }
 
-    // Update LRU tracking
+    // Update access tracking (Map insertion order tracks recency for LRU)
     entry.lastAccess = Date.now();
     entry.hits++;
+    if (this.lru) {
+      this.touch(key, entry);
+    }
 
     return entry.document;
   }
 
   /**
-   * Set a document in the cache
+   * Set a document in the cache.
+   * A non-positive `maxSize` disables caching, so nothing is stored.
    */
   public set(query: string, document: DocumentNode): void {
+    if (this.maxSize <= 0) return;
+
     const key = this.generateKey(query);
 
-    // Evict if at capacity
-    if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
-      this.evictLRU();
+    if (this.cache.has(key)) {
+      // Re-insert so Map order reflects recency when LRU is enabled
+      if (this.lru) {
+        this.cache.delete(key);
+      }
+    } else if (this.cache.size >= this.maxSize) {
+      // Evict at capacity (LRU when enabled, FIFO otherwise)
+      this.evictOldest();
     }
 
     const now = Date.now();
@@ -162,9 +190,12 @@ export class DocumentCache implements IDocumentCache {
       return null;
     }
 
-    // Update LRU tracking
+    // Update access tracking (Map insertion order tracks recency for LRU)
     entry.lastAccess = Date.now();
     entry.hits++;
+    if (this.lru) {
+      this.touch(key, entry);
+    }
 
     return { document: entry.document, validation: entry.validation };
   }
@@ -182,14 +213,22 @@ export class DocumentCache implements IDocumentCache {
   }
 
   /**
-   * Set document with validation result in a single operation
+   * Set document with validation result in a single operation.
+   * A non-positive `maxSize` disables caching, so nothing is stored.
    */
   public setWithValidation(query: string, document: DocumentNode, validation: CachedValidation): void {
+    if (this.maxSize <= 0) return;
+
     const key = this.generateKey(query);
 
-    // Evict if at capacity
-    if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
-      this.evictLRU();
+    if (this.cache.has(key)) {
+      // Re-insert so Map order reflects recency when LRU is enabled
+      if (this.lru) {
+        this.cache.delete(key);
+      }
+    } else if (this.cache.size >= this.maxSize) {
+      // Evict at capacity (LRU when enabled, FIFO otherwise)
+      this.evictOldest();
     }
 
     const now = Date.now();
@@ -242,6 +281,10 @@ export class DocumentCache implements IDocumentCache {
 
   /**
    * Get cache statistics
+   *
+   * Note: `hitRate` is the average number of hits per cached entry
+   * (totalHits / size), NOT a hit/miss ratio — misses are not tracked and
+   * the value can exceed 1.
    */
   public getStats(): CacheStats {
     let totalHits = 0;
@@ -252,6 +295,7 @@ export class DocumentCache implements IDocumentCache {
     return {
       size: this.cache.size,
       maxSize: this.maxSize,
+      // Average hits per entry — not a hit/miss ratio (misses untracked)
       hitRate: this.cache.size > 0 ? totalHits / this.cache.size : 0,
       totalHits,
       entries: this.cache.size,

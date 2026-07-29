@@ -10,31 +10,56 @@ bun add @leaven-graphql/ws @leaven-graphql/core graphql
 
 ## Quick Start
 
-```typescript
-import { createPubSub } from '@leaven-graphql/ws';
-import { LeavenExecutor } from '@leaven-graphql/core';
+`createWebSocketHandler` implements the whole `graphql-ws` server: connection
+init and acknowledgement, keep-alive pings, subscription lifecycle, and the
+protocol close codes. Hand it to `Bun.serve` via `getWebSocketConfig()`.
 
-const pubsub = createPubSub();
-const executor = new LeavenExecutor({ schema });
+```typescript
+import { createWebSocketHandler } from '@leaven-graphql/ws';
+
+const handler = createWebSocketHandler({
+  schema,
+  // Optional: build the GraphQL context for every operation
+  context: (socket) => ({ user: socket.data.connectionParams?.user }),
+});
 
 Bun.serve({
   port: 4000,
   fetch(request, server) {
-    if (request.headers.get('upgrade') === 'websocket') {
-      server.upgrade(request);
+    if (server.upgrade(request)) {
       return;
     }
     return new Response('Not Found', { status: 404 });
   },
-  websocket: {
-    message(ws, message) {
-      handleMessage(ws, message, executor, pubsub);
-    },
-    close(ws) {
-      cleanupConnection(ws);
-    },
-  },
+  websocket: handler.getWebSocketConfig(),
 });
+```
+
+Queries and mutations are supported on the same transport: per the `graphql-ws`
+protocol, a `subscribe` frame carrying a query or mutation is answered with a
+single `next` followed by `complete`. Failures before execution (validation,
+variable coercion) come back as an `error` frame instead; resolver errors ride
+inside the `next` payload.
+
+Serving HTTP and WebSocket from one server is a matter of passing the handler
+to `@leaven-graphql/http`. Subscriptions do **not** inherit the HTTP
+executor's options, so state them for both transports — otherwise the
+longest-lived transport quietly runs on executor defaults:
+
+```typescript
+import { createServer } from '@leaven-graphql/http';
+import { createWebSocketHandler } from '@leaven-graphql/ws';
+
+const executor = { introspection: false, maxDepth: 10 };
+
+createServer({
+  schema,
+  executor,
+  websocket: createWebSocketHandler({
+    schema,
+    subscriptionManager: { executor },
+  }),
+}).start();
 ```
 
 ## Features
@@ -114,61 +139,34 @@ const resolvers = {
 
 ### Authentication
 
+Authenticate in `onConnect`. Returning `false` closes the socket with `4403`,
+and no `subscribe` frame is accepted before a connection is acknowledged
+(unacknowledged operations are closed with `4401`).
+
 ```typescript
-import { parseMessage } from '@leaven-graphql/ws';
+import { createWebSocketHandler } from '@leaven-graphql/ws';
 
-const connections = new Map();
+const users = new WeakMap<object, User>();
 
-Bun.serve({
-  websocket: {
-    async message(ws, data) {
-      const message = parseMessage(data);
-
-      switch (message.type) {
-        case 'connection_init': {
-          const token = message.payload?.authToken;
-
-          try {
-            const user = await verifyToken(token);
-            connections.set(ws, { user, subscriptions: new Map() });
-            ws.send(JSON.stringify({ type: 'connection_ack' }));
-          } catch (error) {
-            ws.close(4401, 'Unauthorized');
-          }
-          break;
-        }
-
-        case 'subscribe': {
-          const connection = connections.get(ws);
-          if (!connection) {
-            ws.close(4401, 'Unauthorized');
-            return;
-          }
-          handleSubscribe(ws, message, connection.user);
-          break;
-        }
-
-        case 'complete': {
-          const connection = connections.get(ws);
-          connection?.subscriptions.get(message.id)?.unsubscribe();
-          connection?.subscriptions.delete(message.id);
-          break;
-        }
-      }
-    },
-
-    close(ws) {
-      const connection = connections.get(ws);
-      if (connection) {
-        for (const sub of connection.subscriptions.values()) {
-          sub.unsubscribe();
-        }
-        connections.delete(ws);
-      }
-    },
+const handler = createWebSocketHandler({
+  schema,
+  async onConnect(socket, params) {
+    try {
+      users.set(socket, await verifyToken(params?.authToken as string));
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  context: (socket) => ({ user: users.get(socket) }),
+  onDisconnect(socket) {
+    users.delete(socket);
   },
 });
 ```
+
+The lifecycle hooks may be async; a hook that rejects is logged and never
+takes the connection (or the process) down with it.
 
 ### Schema Definition
 
@@ -239,44 +237,282 @@ unsubscribe();
 
 ## API Reference
 
+### WebSocketHandler
+
+The `graphql-ws` server. `getWebSocketConfig()` returns the object `Bun.serve`
+expects under `websocket`.
+
+```typescript
+class WebSocketHandler<TContext = unknown> {
+  constructor(config: WebSocketHandlerConfig<TContext>);
+
+  handleOpen(socket: ServerWebSocket<WebSocketContext>): void;
+  handleMessage(
+    socket: ServerWebSocket<WebSocketContext>,
+    message: string | Buffer
+  ): Promise<void>;
+  handleClose(socket: ServerWebSocket<WebSocketContext>): Promise<void>;
+
+  getWebSocketConfig(): {
+    open: (socket: ServerWebSocket<WebSocketContext>) => void;
+    message: (
+      socket: ServerWebSocket<WebSocketContext>,
+      message: string | Buffer
+    ) => void;
+    close: (socket: ServerWebSocket<WebSocketContext>) => void;
+  };
+}
+
+function createWebSocketHandler<TContext = unknown>(
+  config: WebSocketHandlerConfig<TContext>
+): WebSocketHandler<TContext>;
+
+interface WebSocketHandlerConfig<TContext = unknown> {
+  /** GraphQL schema */
+  schema: GraphQLSchema;
+  /** Builds the GraphQL context for each operation */
+  context?: (
+    socket: ServerWebSocket<WebSocketContext>,
+    request: GraphQLRequest
+  ) => TContext | Promise<TContext>;
+  /** Close with 4408 if `connection_init` does not arrive in time (default 3000ms) */
+  connectionInitTimeout?: number;
+  /** Server ping interval; 0 disables keep-alive (default 12000ms) */
+  keepAliveInterval?: number;
+  /** Forwarded to the SubscriptionManager (minus `schema`) */
+  subscriptionManager?: Omit<SubscriptionManagerConfig, 'schema'>;
+  /** Return false to reject the connection with 4403 */
+  onConnect?: (
+    socket: ServerWebSocket<WebSocketContext>,
+    params?: Record<string, unknown>
+  ) => boolean | Promise<boolean>;
+  onDisconnect?: (socket: ServerWebSocket<WebSocketContext>) => void | Promise<void>;
+  onSubscribe?: (
+    socket: ServerWebSocket<WebSocketContext>,
+    id: string,
+    request: GraphQLRequest
+  ) => void | Promise<void>;
+  /** Called once per operation id when it reaches a terminal state */
+  onComplete?: (
+    socket: ServerWebSocket<WebSocketContext>,
+    id: string
+  ) => void | Promise<void>;
+}
+
+interface WebSocketContext {
+  /** Opaque UUIDv4 — do not parse it */
+  connectionId: string;
+  connectionParams?: Record<string, unknown>;
+  initialized: boolean;
+  subscriptions: Set<string>;
+}
+```
+
+Close codes follow the protocol: `4400` invalid message, `4401` unauthorized
+(operation before `connection_init`), `4403` rejected by `onConnect`, `4408`
+init timeout, `4409` duplicate subscription id, `4429` repeated
+`connection_init`.
+
+### SubscriptionManager
+
+Owns the executor and the per-connection subscription registry. The handler
+creates one; you only need it directly when driving subscriptions yourself.
+
+```typescript
+class SubscriptionManager {
+  constructor(config: SubscriptionManagerConfig);
+
+  subscribe<TContext = unknown>(
+    connectionId: string,
+    subscriptionId: string,
+    request: GraphQLRequest,
+    context: TContext,
+    onNext: (result: GraphQLResponse) => void,
+    onComplete: () => void,
+    onError: (errors: readonly { message: string }[]) => void
+  ): Promise<Subscription>;
+
+  /** Run a query or mutation on the same executor */
+  execute<TContext = unknown>(
+    request: GraphQLRequest,
+    context?: TContext
+  ): Promise<GraphQLResponse>;
+
+  unsubscribe(connectionId: string, subscriptionId: string): boolean;
+  unsubscribeConnection(connectionId: string): number;
+  getSubscription(connectionId: string, subscriptionId: string): Subscription | undefined;
+  getConnectionSubscriptions(connectionId: string): Subscription[];
+  clear(): void;
+
+  readonly subscriptionCount: number;
+  readonly connectionCount: number;
+}
+
+function createSubscriptionManager(config: SubscriptionManagerConfig): SubscriptionManager;
+
+interface SubscriptionManagerConfig {
+  schema: GraphQLSchema;
+  /** Default 100 */
+  maxSubscriptionsPerConnection?: number;
+  /** Complete a subscription after this many ms; 0 disables (default 0) */
+  subscriptionTimeout?: number;
+  /**
+   * Reuse an existing executor, or configure the one this manager builds.
+   * Sharing an executor with the HTTP transport avoids a second schema print
+   * and a duplicate document cache, and is the only way subscriptions inherit
+   * `introspection: false`, `maxDepth` or `maxComplexity`.
+   */
+  executor?: LeavenExecutor | Omit<ExecutorConfig, 'schema'>;
+}
+
+interface Subscription {
+  id: string;
+  connectionId: string;
+  request: GraphQLRequest;
+  status: 'pending' | 'active' | 'completed' | 'error';
+  createdAt: number;
+  iterator?: AsyncIterableIterator<GraphQLResponse>;
+  cleanup?: () => void;
+}
+```
+
+Subscription ids are scoped to a connection: `graphql-ws` clients number their
+operations per connection (starting at `"1"`), so every lookup and teardown
+takes **both** the connection id and the subscription id.
+
 ### PubSub
 
 ```typescript
-class PubSub {
-  subscribe(topic: string, callback: (payload: unknown) => void): () => void;
-  publish(topic: string, payload: unknown): void;
-  asyncIterator(topic: string | string[]): AsyncIterableIterator<unknown>;
+class PubSub implements PubSubEngine {
+  constructor(config?: PubSubConfig);
+
+  subscribe<T = unknown>(topic: string, callback: (payload: T) => void): () => void;
+  publish<T = unknown>(topic: string, payload: T): void;
+  asyncIterator<T = unknown>(topic: string | string[]): AsyncIterableIterator<T>;
+  getSubscriberCount(topic: string): number;
+  getTopics(): string[];
+  clear(): void;
 }
 
 function createPubSub(config?: PubSubConfig): PubSub;
 
 interface PubSubConfig {
-  maxSubscribers?: number;
+  /** Subscribers allowed per topic before `subscribe` throws (default 10000) */
+  maxSubscribersPerTopic?: number;
+  /** Enable `.`-segmented `*` / `#` topic patterns (default false) */
   wildcards?: boolean;
+  /**
+   * Payloads an `asyncIterator` buffers while nothing is pulling. When full,
+   * the OLDEST payload is dropped so a slow consumer sees the most recent
+   * events instead of an unbounded queue. Unlimited by default.
+   */
+  maxQueueSize?: number;
 }
 ```
 
 ### Message Handling
 
+`parseMessage` returns a parsed message object; `formatMessage` takes a message
+object and returns the string to send. The `create*` helpers build message
+objects, so they are composed with `formatMessage` rather than sent directly.
+
 ```typescript
-function parseMessage(data: string | Buffer): GraphQLWSMessage;
-function formatMessage(type: string, payload?: unknown): string;
-function createNextMessage(id: string, payload: unknown): string;
-function createErrorMessage(id: string, errors: GraphQLError[]): string;
-function createCompleteMessage(id: string): string;
+function parseMessage(data: string | Buffer, options?: ParseMessageOptions): Message;
+function formatMessage(message: Message): string;
+
+function createConnectionAck(payload?: Record<string, unknown>): ConnectionAckMessage;
+function createNextMessage(
+  id: string,
+  data: Record<string, unknown> | null | undefined,
+  errors?: readonly { message: string }[]
+): NextMessage;
+function createErrorMessage(
+  id: string,
+  errors: readonly { message: string }[]
+): ErrorMessage;
+function createCompleteMessage(id: string): CompleteMessage;
+function createPongMessage(payload?: Record<string, unknown>): PongMessage;
+
+interface ParseMessageOptions {
+  /**
+   * Require a string `id` on the types that carry one (`subscribe`, `next`,
+   * `error`, `complete`). Defaults to `true`, which is correct for a server
+   * reading client frames: an operation frame with no id cannot be routed.
+   * Pass `false` on the client, where a lenient peer may omit the id and a
+   * throw would tear down the whole connection.
+   */
+  requireId?: boolean;
+}
 ```
+
+```typescript
+socket.send(formatMessage(createNextMessage('1', { hello: 'world' })));
+socket.send(formatMessage(createCompleteMessage('1')));
+
+const message = parseMessage(data, { requireId: false });
+```
+
+`parseMessage` throws on invalid JSON, on JSON that is not an object, on a
+missing or unknown `type`, and — unless `requireId` is `false` — on a missing
+`id`.
 
 ### Message Types
 
 ```typescript
-interface GraphQLWSMessage {
-  type: 'connection_init' | 'connection_ack' | 'ping' | 'pong'
-      | 'subscribe' | 'next' | 'error' | 'complete';
-  id?: string;
-  payload?: unknown;
+enum MessageType {
+  ConnectionInit = 'connection_init',
+  ConnectionAck = 'connection_ack',
+  Ping = 'ping',
+  Pong = 'pong',
+  Subscribe = 'subscribe',
+  Next = 'next',
+  Error = 'error',
+  Complete = 'complete',
+}
+
+type Message =
+  | ConnectionInitMessage
+  | ConnectionAckMessage
+  | PingMessage
+  | PongMessage
+  | SubscribeMessage
+  | NextMessage
+  | ErrorMessage
+  | CompleteMessage;
+
+interface SubscribeMessage {
+  id: string;
+  type: MessageType.Subscribe;
+  payload: {
+    operationName?: string;
+    query: string;
+    variables?: Record<string, unknown>;
+    extensions?: Record<string, unknown>;
+  };
+}
+
+interface NextMessage {
+  id: string;
+  type: MessageType.Next;
+  payload: {
+    data?: Record<string, unknown> | null;
+    errors?: readonly { message: string; [key: string]: unknown }[];
+    extensions?: Record<string, unknown>;
+  };
+}
+
+interface ErrorMessage {
+  id: string;
+  type: MessageType.Error;
+  payload: readonly { message: string; [key: string]: unknown }[];
+}
+
+interface CompleteMessage {
+  id: string;
+  type: MessageType.Complete;
 }
 ```
 
 ## License
 
-Apache 2.0 - Pegasus Heavy Industries LLC
+Apache 2.0 - Joseph Quinn

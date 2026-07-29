@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/errors - Error classes
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -30,9 +30,13 @@ export class LeavenError extends Error {
     this.name = 'LeavenError';
     this.code = code;
     this.statusCode = options?.statusCode ?? ERROR_CODES[code]?.status ?? 500;
+    // `code` is spread last on purpose: the enum is the single source of truth.
+    // A caller-supplied `extensions.code` must not be able to disagree with
+    // `this.code`, which would leave `toJSON()` reporting two different codes
+    // and defeat the known-code check in `shouldMaskError`.
     this.extensions = {
-      code,
       ...options?.extensions,
+      code,
     };
     this.originalError = options?.originalError;
 
@@ -41,12 +45,36 @@ export class LeavenError extends Error {
   }
 
   /**
-   * Convert to a GraphQL error
+   * Convert to a GraphQL error.
+   *
+   * IMPORTANT — `originalError` is this LeavenError, not the wrapped cause.
+   * The returned `GraphQLError` sets `originalError` to `this` so downstream
+   * consumers (error masking, `formatError` hooks, loggers) can recognise the
+   * error as intentional and leave it unmasked. The cause passed to the
+   * constructor is therefore one level deeper:
+   *
+   * ```typescript
+   * const gqlError = new LeavenError('Query failed', ErrorCode.INTERNAL_ERROR, {
+   *   originalError: dbError,
+   * }).toGraphQLError();
+   *
+   * gqlError.originalError;                  // the LeavenError
+   * gqlError.originalError.originalError;     // dbError
+   * ```
+   *
+   * Code that matches on the underlying cause (`if (gqlError.originalError
+   * instanceof MyDbError)` in a `formatError` hook, logger or Sentry
+   * integration) must unwrap one extra level, otherwise it silently stops
+   * matching.
+   *
+   * `extensions` are copied verbatim, so subclass detail such as
+   * `RateLimitError.retryAfter` or `ValidationError.validationErrors` survives
+   * the conversion and reaches the formatted response.
    */
   public toGraphQLError(): GraphQLError {
     return new GraphQLError(this.message, {
       extensions: this.extensions,
-      originalError: this.originalError,
+      originalError: this,
     });
   }
 
@@ -142,8 +170,12 @@ export class NotFoundError extends LeavenError {
       statusCode: 404,
       extensions: {
         ...options?.extensions,
-        resourceType: options?.resourceType,
-        resourceId: options?.resourceId,
+        ...(options?.resourceType !== undefined && {
+          resourceType: options.resourceType,
+        }),
+        ...(options?.resourceId !== undefined && {
+          resourceId: options.resourceId,
+        }),
       },
     });
     this.name = 'NotFoundError';
@@ -169,7 +201,9 @@ export class RateLimitError extends LeavenError {
       statusCode: 429,
       extensions: {
         ...options?.extensions,
-        retryAfter: options?.retryAfter,
+        ...(options?.retryAfter !== undefined && {
+          retryAfter: options.retryAfter,
+        }),
       },
     });
     this.name = 'RateLimitError';
@@ -259,6 +293,13 @@ export class PersistedQueryError extends LeavenError {
  */
 export class InputError extends LeavenError {
   public readonly field?: string;
+  /**
+   * The offending input value, retained for local inspection (logging,
+   * debugging, tests). Deliberately **not** copied into `extensions`, so the
+   * value never reaches the client in a formatted GraphQL response — user
+   * input may contain credentials or other sensitive data. Only `field` is
+   * exposed.
+   */
   public readonly value?: unknown;
 
   constructor(
@@ -273,7 +314,7 @@ export class InputError extends LeavenError {
       statusCode: 400,
       extensions: {
         ...options?.extensions,
-        field: options?.field,
+        ...(options?.field !== undefined && { field: options.field }),
       },
     });
     this.name = 'InputError';

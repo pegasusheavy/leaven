@@ -1,13 +1,106 @@
 /**
  * @leaven-graphql/nestjs - Module tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
+import 'reflect-metadata';
 import { describe, test, expect } from 'bun:test';
-import { LeavenModule, LEAVEN_MODULE_OPTIONS, LEAVEN_DRIVER } from './module';
-import type { LeavenModuleOptions } from './types';
+import { Test } from '@nestjs/testing';
+import { Injectable, type MiddlewareConsumer } from '@nestjs/common';
+import { PubSub, createPubSub } from '@leaven-graphql/ws';
+import { GraphQLSchema, GraphQLObjectType, GraphQLString } from 'graphql';
+import { LeavenModule, LEAVEN_MODULE_OPTIONS, LEAVEN_DRIVER, LEAVEN_PUBSUB } from './module';
+import { LeavenDriver } from './driver';
+import { SchemaBuilderService } from './schema-builder';
+import { SubscriptionManager, InjectPubSub } from './subscriptions';
+import { GraphQLMiddleware } from './middleware';
+import type { LeavenModuleOptions, LeavenModuleAsyncOptions } from './types';
+
+const createSchema = (): GraphQLSchema =>
+  new GraphQLSchema({
+    query: new GraphQLObjectType({
+      name: 'Query',
+      fields: {
+        hello: {
+          type: GraphQLString,
+          resolve: () => 'Hello World!',
+        },
+      },
+    }),
+  });
+
+type MiddlewareRequest = Parameters<GraphQLMiddleware['use']>[0];
+type MiddlewareResponse = Parameters<GraphQLMiddleware['use']>[1];
+
+/**
+ * Invoke the middleware with a fake POST request and capture the response.
+ */
+async function invokeMiddleware(
+  middleware: GraphQLMiddleware,
+  query: string,
+  path = '/graphql'
+): Promise<{ statusCode: number; body: unknown; nextCalled: boolean }> {
+  let statusCode = 0;
+  let body: unknown;
+  let nextCalled = false;
+
+  const res = {
+    status(code: number) {
+      statusCode = code;
+      return res;
+    },
+    json(payload: unknown) {
+      body = payload;
+      return res;
+    },
+    send(payload: unknown) {
+      body = payload;
+      return res;
+    },
+    setHeader() {
+      return res;
+    },
+    end() {
+      return res;
+    },
+  };
+
+  await middleware.use(
+    { method: 'POST', path, body: { query }, headers: {} } as MiddlewareRequest,
+    res as unknown as MiddlewareResponse,
+    () => {
+      nextCalled = true;
+    }
+  );
+
+  return { statusCode, body, nextCalled };
+}
+
+/**
+ * Create a MiddlewareConsumer spy capturing applied middleware and routes.
+ */
+function createConsumerSpy(): {
+  consumer: MiddlewareConsumer;
+  applied: unknown[];
+  routes: unknown[];
+} {
+  const applied: unknown[] = [];
+  const routes: unknown[] = [];
+  const consumer = {
+    apply(...middleware: unknown[]) {
+      applied.push(...middleware);
+      return {
+        forRoutes(...r: unknown[]) {
+          routes.push(...r);
+          return consumer;
+        },
+      };
+    },
+  };
+  return { consumer: consumer as unknown as MiddlewareConsumer, applied, routes };
+}
 
 describe('LeavenModule', () => {
   describe('forRoot', () => {
@@ -56,6 +149,16 @@ describe('LeavenModule', () => {
 
       expect(driverProvider).toBeDefined();
       expect((driverProvider as { useFactory: Function }).useFactory).toBeDefined();
+    });
+
+    test('should register schema builder, subscription manager, and middleware providers', () => {
+      const module = LeavenModule.forRoot();
+
+      expect(module.providers).toContain(SchemaBuilderService);
+      expect(module.providers).toContain(SubscriptionManager);
+      expect(module.providers).toContain(GraphQLMiddleware);
+      expect(module.exports).toContain(SchemaBuilderService);
+      expect(module.exports).toContain(SubscriptionManager);
     });
   });
 
@@ -138,6 +241,220 @@ describe('LeavenModule', () => {
       });
 
       expect(module.imports).toContain(MockModule);
+    });
+
+    test('should register schema builder, subscription manager, and middleware providers', () => {
+      const module = LeavenModule.forRootAsync({
+        useFactory: () => ({}),
+      });
+
+      expect(module.providers).toContain(SchemaBuilderService);
+      expect(module.providers).toContain(SubscriptionManager);
+      expect(module.providers).toContain(GraphQLMiddleware);
+      expect(module.exports).toContain(SchemaBuilderService);
+      expect(module.exports).toContain(SubscriptionManager);
+    });
+
+    test('should throw when none of useFactory, useClass, or useExisting is provided', () => {
+      expect(() =>
+        LeavenModule.forRootAsync({} as LeavenModuleAsyncOptions)
+      ).toThrow(
+        'LeavenModule.forRootAsync requires one of useFactory, useClass, or useExisting'
+      );
+    });
+  });
+
+  describe('configure', () => {
+    test('applies GraphQLMiddleware at the default /graphql path', () => {
+      const leavenModule = new LeavenModule({});
+      const { consumer, applied, routes } = createConsumerSpy();
+
+      leavenModule.configure(consumer);
+
+      expect(applied).toContain(GraphQLMiddleware);
+      expect(routes).toContain('/graphql');
+    });
+
+    test('applies GraphQLMiddleware at a custom path', () => {
+      const leavenModule = new LeavenModule({ path: '/api/graphql' });
+      const { consumer, applied, routes } = createConsumerSpy();
+
+      leavenModule.configure(consumer);
+
+      expect(applied).toContain(GraphQLMiddleware);
+      expect(routes).toContain('/api/graphql');
+    });
+
+    test('does nothing when the module was imported without forRoot()', () => {
+      const leavenModule = new LeavenModule();
+      const { consumer, applied, routes } = createConsumerSpy();
+
+      leavenModule.configure(consumer);
+
+      expect(applied).toEqual([]);
+      expect(routes).toEqual([]);
+    });
+  });
+
+  describe('integration (NestJS testing module)', () => {
+    test('boots with a pre-built schema, wires it through the schema builder into the driver, and serves queries via the middleware', async () => {
+      const schema = createSchema();
+      const moduleRef = await Test.createTestingModule({
+        imports: [LeavenModule.forRoot({ schema })],
+      }).compile();
+      await moduleRef.init();
+
+      try {
+        const builder = moduleRef.get(SchemaBuilderService);
+        const driver = moduleRef.get<LeavenDriver>(LEAVEN_DRIVER);
+        const subscriptions = moduleRef.get(SubscriptionManager);
+        const middleware = moduleRef.get(GraphQLMiddleware);
+
+        // Schema is built and shared between the builder and the driver
+        expect(builder.isSchemaReady()).toBe(true);
+        expect(driver.getSchema()).toBe(schema);
+        expect(subscriptions).toBeInstanceOf(SubscriptionManager);
+        expect(middleware).toBeInstanceOf(GraphQLMiddleware);
+
+        // The middleware answers GraphQL requests end to end
+        const { statusCode, body } = await invokeMiddleware(middleware, '{ hello }');
+        expect(statusCode).toBe(200);
+        expect((body as { errors?: unknown[] }).errors ?? []).toEqual([]);
+        expect((body as { data?: unknown }).data).toEqual({ hello: 'Hello World!' });
+      } finally {
+        await moduleRef.close();
+      }
+    });
+
+    test('injects a working PubSub into providers via @InjectPubSub()', async () => {
+      @Injectable()
+      class FeedService {
+        constructor(@InjectPubSub() public readonly pubSub: PubSub) {}
+      }
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [LeavenModule.forRoot({ schema: createSchema() })],
+        providers: [FeedService],
+      }).compile();
+      await moduleRef.init();
+
+      try {
+        const service = moduleRef.get(FeedService);
+        expect(service.pubSub).toBeInstanceOf(PubSub);
+
+        // The injected instance is the module's, and it actually delivers
+        const iterator = service.pubSub.asyncIterator<{ body: string }>('COMMENT_ADDED');
+        moduleRef.get<PubSub>(LEAVEN_PUBSUB).publish('COMMENT_ADDED', { body: 'hello' });
+
+        const first = await iterator.next();
+        expect(first.value).toEqual({ body: 'hello' });
+        await iterator.return?.(undefined);
+      } finally {
+        await moduleRef.close();
+      }
+    });
+
+    test('uses a caller-supplied PubSub instance when one is configured', async () => {
+      const pubSub = createPubSub();
+
+      const moduleRef = await Test.createTestingModule({
+        imports: [LeavenModule.forRoot({ schema: createSchema(), pubSub })],
+      }).compile();
+      await moduleRef.init();
+
+      try {
+        expect(moduleRef.get<PubSub>(LEAVEN_PUBSUB)).toBe(pubSub);
+      } finally {
+        await moduleRef.close();
+      }
+    });
+
+    test('boots via forRootAsync with useFactory and builds the schema', async () => {
+      const schema = createSchema();
+      const moduleRef = await Test.createTestingModule({
+        imports: [LeavenModule.forRootAsync({ useFactory: () => ({ schema }) })],
+      }).compile();
+      await moduleRef.init();
+
+      try {
+        const builder = moduleRef.get(SchemaBuilderService);
+        const driver = moduleRef.get<LeavenDriver>(LEAVEN_DRIVER);
+
+        expect(builder.isSchemaReady()).toBe(true);
+        expect(driver.getSchema()).toBe(schema);
+        expect(moduleRef.get(GraphQLMiddleware)).toBeInstanceOf(GraphQLMiddleware);
+      } finally {
+        await moduleRef.close();
+      }
+    });
+
+    test('boots with typeDefs/resolvers and keeps the schema builder and driver in sync', async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          LeavenModule.forRoot({
+            typeDefs: 'type Query { hello: String }',
+            resolvers: { Query: { hello: () => 'Hello World!' } },
+          }),
+        ],
+      }).compile();
+      await moduleRef.init();
+
+      try {
+        const builder = moduleRef.get(SchemaBuilderService);
+        const driver = moduleRef.get<LeavenDriver>(LEAVEN_DRIVER);
+
+        // Whatever the builder produced must be what the driver serves.
+        expect(driver.getSchema()).toBe(builder.getSchema());
+        expect(moduleRef.get(SubscriptionManager)).toBeInstanceOf(SubscriptionManager);
+        expect(moduleRef.get(GraphQLMiddleware)).toBeInstanceOf(GraphQLMiddleware);
+      } finally {
+        await moduleRef.close();
+      }
+    });
+
+    test('builds an executable schema from typeDefs/resolvers and serves queries', async () => {
+      const moduleRef = await Test.createTestingModule({
+        imports: [
+          LeavenModule.forRoot({
+            typeDefs: 'type Query { hello: String }',
+            resolvers: { Query: { hello: () => 'Hello World!' } },
+          }),
+        ],
+      }).compile();
+      await moduleRef.init();
+
+      try {
+        const builder = moduleRef.get(SchemaBuilderService);
+        const middleware = moduleRef.get(GraphQLMiddleware);
+
+        expect(builder.isSchemaReady()).toBe(true);
+
+        const { statusCode, body } = await invokeMiddleware(middleware, '{ hello }');
+        expect(statusCode).toBe(200);
+        expect((body as { data?: unknown }).data).toEqual({ hello: 'Hello World!' });
+      } finally {
+        await moduleRef.close();
+      }
+    });
+
+    test('injects module options into LeavenModule for middleware configuration', async () => {
+      const schema = createSchema();
+      const moduleRef = await Test.createTestingModule({
+        imports: [LeavenModule.forRoot({ schema, path: '/api/graphql' })],
+      }).compile();
+      await moduleRef.init();
+
+      try {
+        const leavenModule = moduleRef.get(LeavenModule);
+        const { consumer, applied, routes } = createConsumerSpy();
+
+        leavenModule.configure(consumer);
+
+        expect(applied).toContain(GraphQLMiddleware);
+        expect(routes).toContain('/api/graphql');
+      } finally {
+        await moduleRef.close();
+      }
     });
   });
 

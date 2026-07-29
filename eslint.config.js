@@ -1,7 +1,7 @@
 /**
  * ESLint configuration for Leaven
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -14,8 +14,8 @@ export default [
   {
     ignores: [
       'node_modules/**',
-      'dist/**',
-      'coverage/**',
+      '**/dist/**',
+      '**/coverage/**',
       '**/*.js',
       '**/*.mjs',
       '**/*.cjs',
@@ -31,7 +31,13 @@ export default [
       parserOptions: {
         ecmaVersion: 'latest',
         sourceType: 'module',
-        project: './tsconfig.json',
+        // Type-aware linting. The root tsconfig.json is solution-style
+        // (references only, no `include`), so `project: './tsconfig.json'`
+        // cannot resolve any source file. `projectService` (typescript-eslint
+        // v8+) asks the TS language service for the owning project instead,
+        // which resolves each file through its own packages/*/tsconfig.json.
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
       },
     },
     plugins: {
@@ -76,6 +82,18 @@ export default [
       'no-console': ['warn', { allow: ['warn', 'error'] }],
       'prefer-const': 'error',
       'no-var': 'error',
+
+      // Packages ship as ESM and are consumed under Bun, where a CommonJS
+      // `require()` call is not statically analysable and defeats bundling.
+      // Use a static `import` (or `await import()`) instead.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='require']",
+          message:
+            'Use a static import instead of require(); CommonJS require() is not supported in the published ESM builds.',
+        },
+      ],
     },
   },
 
@@ -87,6 +105,9 @@ export default [
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
       'no-console': 'off',
+      // Tests are not published, so a CommonJS require() there does not reach
+      // consumers. The rule stays on for every non-test file in packages/.
+      'no-restricted-syntax': 'off',
     },
   },
 ];

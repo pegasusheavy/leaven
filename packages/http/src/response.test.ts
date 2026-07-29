@@ -1,11 +1,12 @@
 /**
  * @leaven-graphql/http - Response utilities tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import { describe, test, expect } from 'bun:test';
+import { ErrorCode } from '@leaven-graphql/errors';
 import {
   buildResponse,
   sendResponse,
@@ -103,6 +104,35 @@ describe('corsHeaders', () => {
   });
 });
 
+/** A code that is deliberately absent from the ErrorCode enum */
+const UNKNOWN_ERROR_CODE = 'SOME_UNKNOWN_CODE';
+
+/**
+ * Hand-written expected statuses. This table — not the ERROR_CODES registry —
+ * is the oracle: it must be edited by hand whenever an ErrorCode is added,
+ * which the exhaustiveness test below enforces.
+ */
+const STATUS_BY_CODE: ReadonlyArray<{ code: string; status: number }> = [
+  { code: 'INTERNAL_ERROR', status: 500 },
+  { code: 'BAD_REQUEST', status: 400 },
+  { code: 'PAYLOAD_TOO_LARGE', status: 413 },
+  { code: 'VALIDATION_ERROR', status: 400 },
+  { code: 'PARSE_ERROR', status: 400 },
+  { code: 'UNAUTHENTICATED', status: 401 },
+  { code: 'FORBIDDEN', status: 403 },
+  { code: 'NOT_FOUND', status: 404 },
+  { code: 'ALREADY_EXISTS', status: 409 },
+  { code: 'RATE_LIMITED', status: 429 },
+  { code: 'COMPLEXITY_LIMIT', status: 400 },
+  { code: 'DEPTH_LIMIT', status: 400 },
+  { code: 'PERSISTED_QUERY_NOT_FOUND', status: 400 },
+  { code: 'PERSISTED_QUERY_INVALID', status: 400 },
+  { code: 'INVALID_INPUT', status: 400 },
+  { code: 'MISSING_REQUIRED_FIELD', status: 400 },
+  // Unknown codes fall back to the documented 500 default
+  { code: UNKNOWN_ERROR_CODE, status: 500 },
+];
+
 describe('buildResponse', () => {
   test('should build response with data', async () => {
     const response = buildResponse({
@@ -162,22 +192,107 @@ describe('buildResponse', () => {
   });
 
   test('should set correct status for various error codes', () => {
-    const testCases: Array<{ code: string; status: number }> = [
-      { code: 'UNAUTHENTICATED', status: 401 },
-      { code: 'FORBIDDEN', status: 403 },
-      { code: 'NOT_FOUND', status: 404 },
-      { code: 'BAD_REQUEST', status: 400 },
-      { code: 'VALIDATION_ERROR', status: 400 },
-      { code: 'RATE_LIMITED', status: 429 },
-      { code: 'INTERNAL_ERROR', status: 500 },
-    ];
-
-    for (const { code, status } of testCases) {
+    for (const { code, status } of STATUS_BY_CODE) {
       const response = buildResponse({
         errors: [{ message: 'Error', extensions: { code } }],
       });
       expect(response.status).toBe(status);
     }
+  });
+
+  test('should have a hand-written expected status for every ErrorCode', () => {
+    const covered = new Set(STATUS_BY_CODE.map(({ code }) => code));
+    const expected = new Set<string>([
+      ...Object.values(ErrorCode),
+      UNKNOWN_ERROR_CODE,
+    ]);
+
+    expect(covered).toEqual(expected);
+  });
+
+  test('should default to 500 for an uncoded error with no data', () => {
+    const response = buildResponse({
+      errors: [{ message: 'Error' }],
+    });
+
+    expect(response.status).toBe(500);
+  });
+
+  test('should stay 200 for an uncoded error that carries data', () => {
+    const response = buildResponse({
+      data: { hello: 'world' },
+      errors: [{ message: 'Error' }],
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  test('should stay 200 for a partial success', async () => {
+    const response = buildResponse({
+      data: { hello: 'world', broken: null },
+      errors: [{ message: 'Resolver failed', path: ['broken'] }],
+    });
+
+    expect(response.status).toBe(200);
+
+    const body = await response.json();
+    expect(body.data).toEqual({ hello: 'world', broken: null });
+    expect(body.errors[0].message).toBe('Resolver failed');
+  });
+
+  test('should stay 200 for a partial success carrying a NOT_FOUND error', () => {
+    const response = buildResponse({
+      data: { ok: 'fine', missing: null },
+      errors: [
+        {
+          message: 'User not found',
+          path: ['missing'],
+          extensions: { code: 'NOT_FOUND' },
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  test('should stay 200 for a partial success carrying an UNAUTHENTICATED error', () => {
+    const response = buildResponse({
+      data: { ok: 'fine', secret: null },
+      errors: [
+        {
+          message: 'Not authenticated',
+          path: ['secret'],
+          extensions: { code: 'UNAUTHENTICATED' },
+        },
+      ],
+    });
+
+    expect(response.status).toBe(200);
+  });
+
+  test('should escalate a coded error only when data is absent', () => {
+    for (const { code, status } of STATUS_BY_CODE) {
+      const withData = buildResponse({
+        data: { hello: 'world' },
+        errors: [{ message: 'Error', extensions: { code } }],
+      });
+      expect(withData.status).toBe(200);
+
+      const withNullData = buildResponse({
+        data: null,
+        errors: [{ message: 'Error', extensions: { code } }],
+      });
+      expect(withNullData.status).toBe(status);
+    }
+  });
+
+  test('should not remap an explicit status even with errors', () => {
+    const response = buildResponse(
+      { errors: [{ message: 'Error', extensions: { code: 'NOT_FOUND' } }] },
+      { status: 418 }
+    );
+
+    expect(response.status).toBe(418);
   });
 });
 

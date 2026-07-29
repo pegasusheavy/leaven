@@ -1,11 +1,18 @@
 /**
  * Leaven - A high-performance GraphQL library for the Bun runtime
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Meta-package that re-exports the Leaven runtime modules — core, http, ws,
+ * context, errors, plugins, and playground — plus selected schema-building
+ * helpers from `@leaven-graphql/schema`. The NestJS integration is not
+ * included here; it ships separately as `@leaven-graphql/nestjs`.
+ *
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
-// Re-export all packages for convenience
+import { createServer } from '@leaven-graphql/http';
+
+// Re-export the runtime packages for convenience
 // Core exports everything
 export * from '@leaven-graphql/core';
 // Schema may have duplicates with core, exclude them
@@ -109,6 +116,5 @@ export {
  * Quick start helper to create a GraphQL server
  */
 export function leaven(config: import('@leaven-graphql/http').ServerConfig): import('@leaven-graphql/http').LeavenServer {
-  const { createServer } = require('@leaven-graphql/http');
   return createServer(config);
 }

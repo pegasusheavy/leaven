@@ -38,7 +38,7 @@ import { SeoService } from '../services/seo.service';
         <div class="card p-4 mb-4 border-amber-500/20 bg-amber-500/5">
           <p class="text-zinc-300 text-sm">
             <strong class="text-amber-400">⚡ Bun Runtime:</strong> This package requires
-            <a href="https://github.com/pegasusheavy/nestjs-platform-bun" target="_blank" rel="noopener" class="text-amber-400 hover:underline">&#64;pegasusheavy/nestjs-platform-bun</a>
+            <code class="text-amber-400">&#64;lexmata/nestjs-platform-bun</code>
             as the NestJS HTTP adapter for Bun support.
           </p>
         </div>
@@ -49,6 +49,7 @@ import { SeoService } from '../services/seo.service';
             <li><strong class="text-white">Guards</strong> - Authentication, roles, permissions</li>
             <li><strong class="text-white">Interceptors</strong> - Logging, caching, metrics</li>
             <li><strong class="text-white">GqlExecutionContext</strong> - Access GraphQL context</li>
+            <li><strong class="text-white">Subscriptions</strong> - graphql-ws over WebSocket with a shared PubSub</li>
           </ul>
         </div>
       </section>
@@ -101,6 +102,44 @@ import { SeoService } from '../services/seo.service';
         <app-code-block [code]="interceptorsCode" title="post.resolver.ts" />
       </section>
 
+      <!-- Subscriptions -->
+      <section class="mb-12">
+        <h2 class="text-2xl font-semibold text-white mb-4">Subscriptions</h2>
+        <div class="card p-4 mb-4 border-amber-500/20 bg-amber-500/5">
+          <p class="text-zinc-300 text-sm">
+            <strong class="text-amber-400">⚠️ You wire the transport:</strong>
+            <code class="text-amber-400">SubscriptionManager</code> speaks the graphql-ws protocol but
+            does <strong class="text-white">not</strong> own a server. Importing
+            <code class="text-amber-400">LeavenModule</code> registers the manager; nothing calls
+            <code class="text-amber-400">server.upgrade()</code>, so configuring
+            <code class="text-amber-400">subscriptions</code> alone gets you a configured object and no
+            listening socket.
+          </p>
+        </div>
+
+        <h3 class="text-lg font-semibold text-white mt-6 mb-3">Module configuration</h3>
+        <app-code-block [code]="subscriptionsModuleCode" title="app.module.ts" />
+
+        <h3 class="text-lg font-semibold text-white mt-6 mb-3">Wiring the WebSocket transport</h3>
+        <p class="text-zinc-400 mb-4">
+          Register the upgrade route yourself and hand each socket to the manager.
+          <code class="text-pink-400">getPath()</code> reports the configured path
+          (<code class="text-pink-400">subscriptions.path</code>, falling back to
+          <code class="text-pink-400">options.path</code>, then <code class="text-pink-400">/graphql</code>),
+          so route against that rather than a duplicated constant.
+        </p>
+        <app-code-block [code]="subscriptionsTransportCode" title="main.ts" />
+
+        <h3 class="text-lg font-semibold text-white mt-6 mb-3">Resolvers and PubSub</h3>
+        <p class="text-zinc-400 mb-4">
+          Inject the module's shared <code class="text-pink-400">PubSub</code> with
+          <code class="text-pink-400">&#64;InjectPubSub()</code> (the
+          <code class="text-pink-400">LEAVEN_PUBSUB</code> provider), so a publisher and a subscriber in
+          different providers share the same topics:
+        </p>
+        <app-code-block [code]="subscriptionsResolverCode" title="message.resolver.ts" />
+      </section>
+
       <!-- GqlExecutionContext -->
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">GqlExecutionContext</h2>
@@ -144,9 +183,29 @@ import { SeoService } from '../services/seo.service';
                 <td class="py-3 pr-4"><code class="text-pink-400">LoggingInterceptor</code></td>
                 <td class="py-3">Log resolver execution</td>
               </tr>
-              <tr>
+              <tr class="border-b border-zinc-800/50">
                 <td class="py-3 pr-4"><code class="text-pink-400">GqlExecutionContext</code></td>
                 <td class="py-3">Access GraphQL context in guards</td>
+              </tr>
+              <tr class="border-b border-zinc-800/50">
+                <td class="py-3 pr-4"><code class="text-pink-400">SubscriptionManager</code></td>
+                <td class="py-3">
+                  graphql-ws protocol handler; <code class="text-pink-400">getPath()</code>,
+                  <code class="text-pink-400">getWebSocketConfig()</code>,
+                  <code class="text-pink-400">publishToTopic()</code>
+                </td>
+              </tr>
+              <tr class="border-b border-zinc-800/50">
+                <td class="py-3 pr-4"><code class="text-pink-400">&#64;Subscription()</code></td>
+                <td class="py-3">Record subscription metadata, optionally with a filter</td>
+              </tr>
+              <tr class="border-b border-zinc-800/50">
+                <td class="py-3 pr-4"><code class="text-pink-400">&#64;SubscriptionFilter()</code></td>
+                <td class="py-3">Standalone event filter for a subscription method</td>
+              </tr>
+              <tr>
+                <td class="py-3 pr-4"><code class="text-pink-400">&#64;InjectPubSub()</code></td>
+                <td class="py-3">Inject the module's shared PubSub (<code class="text-pink-400">LEAVEN_PUBSUB</code>)</td>
               </tr>
             </tbody>
           </table>
@@ -183,17 +242,31 @@ export class NestjsComponent implements OnInit {
   ngOnInit(): void {
     this.seoService.updatePageSEO({
       title: 'NestJS Integration',
-      description: 'Seamlessly integrate Leaven with NestJS using @leaven-graphql/nestjs. Guards, decorators, interceptors, and more.',
-      keywords: ['NestJS GraphQL', 'NestJS integration', 'GraphQL decorators', 'NestJS guards', 'Leaven'],
+      description: 'Seamlessly integrate Leaven with NestJS using @leaven-graphql/nestjs. Guards, decorators, interceptors, and graphql-ws subscriptions.',
+      keywords: ['NestJS GraphQL', 'NestJS integration', 'GraphQL decorators', 'NestJS guards', 'NestJS subscriptions', 'Leaven'],
       canonical: '/nestjs',
       ogType: 'article'
     });
+
+    // Emit the JSON-LD counterpart of this page's TechArticle microdata,
+    // plus the breadcrumb trail rendered at the top of the article.
+    this.seoService.updateStructuredData([
+      this.seoService.generateTechArticleSchema({
+        title: 'NestJS Integration',
+        description: 'Seamlessly integrate Leaven with NestJS using @leaven-graphql/nestjs. Guards, decorators, interceptors, and graphql-ws subscriptions.',
+        url: '/nestjs'
+      }),
+      this.seoService.generateBreadcrumbSchema([
+        { name: 'Home', url: '/' },
+        { name: 'NestJS Integration', url: '/nestjs' }
+      ])
+    ]);
   }
 
-  installCode = `bun add @leaven-graphql/nestjs @leaven-graphql/core @leaven-graphql/context @leaven-graphql/errors @pegasusheavy/nestjs-platform-bun graphql`;
+  installCode = `bun add @leaven-graphql/nestjs @leaven-graphql/core @leaven-graphql/context @leaven-graphql/errors @lexmata/nestjs-platform-bun graphql`;
 
   bootstrapCode = `import { NestFactory } from '@nestjs/core';
-import { BunAdapter } from '@pegasusheavy/nestjs-platform-bun';
+import { BunAdapter } from '@lexmata/nestjs-platform-bun';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -362,6 +435,128 @@ export class PostResolver {
   }
 }`;
 
+  subscriptionsModuleCode = `import { Module } from '@nestjs/common';
+import { LeavenModule } from '@leaven-graphql/nestjs';
+import { createPubSub } from '@leaven-graphql/ws';
+import { schema } from './schema';
+
+@Module({
+  imports: [
+    LeavenModule.forRoot({
+      schema,
+      subscriptions: {
+        path: '/graphql',                    // Default: options.path, then '/graphql'
+        keepAlive: 12000,                    // Default: 12000ms
+        connectionInitWaitTimeout: 3000,     // Default: 3000ms
+        maxSubscriptionsPerConnection: 100,  // Default: 100
+
+        // Returning false rejects the connection
+        onConnect: (ctx) => Boolean(ctx.connectionParams?.token),
+        onDisconnect: (ctx) => console.log('Client disconnected'),
+      },
+
+      // Optional: supply your own PubSub (e.g. a distributed engine) so events
+      // published on one instance reach subscribers on another. Defaults to a
+      // per-module in-memory instance.
+      pubSub: createPubSub(),
+    }),
+  ],
+})
+export class AppModule {}`;
+
+  subscriptionsTransportCode = `import { NestFactory } from '@nestjs/core';
+import { BunAdapter } from '@lexmata/nestjs-platform-bun';
+import { SubscriptionManager } from '@leaven-graphql/nestjs';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, new BunAdapter());
+  await app.init();
+
+  const subscriptions = app.get(SubscriptionManager);
+
+  Bun.serve({
+    port: 3000,
+    // The upgrade route. The manager never calls server.upgrade() itself.
+    fetch(request, server) {
+      const { pathname } = new URL(request.url);
+      if (
+        pathname === subscriptions.getPath() &&
+        request.headers.get('upgrade')?.toLowerCase() === 'websocket'
+      ) {
+        return server.upgrade(request)
+          ? undefined
+          : new Response('Upgrade failed', { status: 400 });
+      }
+      // Everything else stays on the Nest HTTP pipeline.
+      return app.getHttpAdapter().getInstance().fetch(request);
+    },
+    // Bun ServerWebSockets: open/message/close already bound to the manager
+    websocket: subscriptions.getWebSocketConfig(),
+  });
+}
+
+bootstrap();
+
+// The upgrade request is NOT threaded through getWebSocketConfig(), so
+// ctx.request is undefined in onConnect/context. If a hook needs it, stash it
+// at upgrade time (server.upgrade(request, { data: { request } })) and call
+// handleOpen yourself:
+//
+//   websocket: {
+//     open: (socket) => subscriptions.handleOpen(socket, socket.data.request),
+//     message: (socket, message) => void subscriptions.handleMessage(socket, message),
+//     close: (socket) => void subscriptions.handleClose(socket),
+//   }
+//
+// DOM-shaped WebSockets (a ws-style server or a test harness) go to
+// handleConnection instead, which attaches its own listeners:
+//
+//   await subscriptions.handleConnection(socket, request);`;
+
+  subscriptionsResolverCode = `import { Resolver, Query, Mutation } from '@nestjs/graphql';
+import { InjectPubSub, Subscription, SubscriptionFilter } from '@leaven-graphql/nestjs';
+import type { PubSub } from '@leaven-graphql/ws';
+
+@Resolver()
+export class MessageResolver {
+  constructor(@InjectPubSub() private readonly pubSub: PubSub) {}
+
+  // The filter option narrows the streamed events
+  @Subscription(() => Message, {
+    filter: (payload, variables) => payload.roomId === variables.roomId,
+  })
+  messageAdded() {
+    return this.pubSub.asyncIterator('MESSAGE_ADDED');
+  }
+
+  // @SubscriptionFilter is the standalone equivalent, and preserves the
+  // method's return kind — a method returning an async iterable still does,
+  // so "for await (const e of resolver.commentAdded())" works in tests.
+  @Subscription(() => Comment)
+  @SubscriptionFilter((payload, variables) => payload.postId === variables.postId)
+  commentAdded() {
+    return this.pubSub.asyncIterator('COMMENT_ADDED');
+  }
+
+  @Mutation(() => Message)
+  async sendMessage(@Args('roomId') roomId: string, @Args('body') body: string) {
+    const message = await this.messages.create({ roomId, body });
+    this.pubSub.publish('MESSAGE_ADDED', { messageAdded: message });
+    return message;
+  }
+}
+
+// @Subscription only RECORDS metadata: code-first schema construction is not
+// implemented, so a decorated method still needs a matching subscribe field in
+// the schema you hand to LeavenModule. The filter is the part that always
+// takes effect, because it wraps the method itself.
+
+// Server-side, topic-keyed delivery driven by an external engine is available
+// on the manager directly:
+//   subscriptions.registerSubscription(...);
+//   subscriptions.publishToTopic('MESSAGE_ADDED', payload);`;
+
   contextCode = `import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { GqlExecutionContext } from '@leaven-graphql/nestjs';
 
@@ -382,6 +577,12 @@ export class CustomGuard implements CanActivate {
     const operationType = gqlContext.getOperationType();
     const selectedFields = gqlContext.getSelectedFields();
     const operationName = gqlContext.getOperationName();
+
+    // Field path. getFullPath() keeps list indices, so users[3].email yields
+    // ['users', 3, 'email'] and one element is distinguishable from a field.
+    const path = gqlContext.getFullPath();
+    // getPath() drops the indices (['users', 'email']) and is deprecated;
+    // it remains stable as a metric label or cache key.
 
     // Your authorization logic
     return this.checkPermission(ctx.user, fieldName);

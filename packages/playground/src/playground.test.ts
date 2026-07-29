@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/playground - Playground tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -89,6 +89,16 @@ describe('renderPlayground', () => {
 
     expect(html).not.toContain('<script>alert("xss")</script>');
     expect(html).toContain('&lt;script&gt;');
+  });
+
+  test('should not emit a literal </script> from the default query', () => {
+    const html = renderPlayground({
+      endpoint: '/graphql',
+      defaultQuery: '</script><script>alert("pwn")</script>',
+    });
+
+    expect(html).not.toContain('</script><script>');
+    expect(html).toContain('\\u003c/script\\u003e');
   });
 });
 

@@ -29,7 +29,8 @@ export class SeoService {
   private readonly baseUrl = 'https://leaven.dev';
   private readonly siteName = 'Leaven Documentation';
   private readonly defaultImage = '/og-image.png';
-  private readonly twitterHandle = '@PegasusHeavyInd';
+  private readonly author = 'Joseph Quinn';
+  private readonly authorUrl = 'https://github.com/quinnjr';
 
   constructor(
     private meta: Meta,
@@ -71,7 +72,6 @@ export class SeoService {
     this.updateMetaTag('twitter:title', fullTitle, 'name');
     this.updateMetaTag('twitter:description', config.description, 'name');
     this.updateMetaTag('twitter:image', `${this.baseUrl}${config.ogImage ?? this.defaultImage}`, 'name');
-    this.updateMetaTag('twitter:creator', this.twitterHandle, 'name');
 
     // Article-specific
     if (config.ogType === 'article') {
@@ -171,17 +171,14 @@ export class SeoService {
       'datePublished': config.datePublished ?? '2026-01-01',
       'dateModified': config.dateModified ?? '2026-01-01',
       'author': {
-        '@type': 'Organization',
-        'name': 'Pegasus Heavy Industries LLC',
-        'url': 'https://pegasusheavyindustries.com'
+        '@type': 'Person',
+        'name': this.author,
+        'url': this.authorUrl
       },
       'publisher': {
-        '@type': 'Organization',
-        'name': 'Pegasus Heavy Industries LLC',
-        'logo': {
-          '@type': 'ImageObject',
-          'url': `${this.baseUrl}/logo.png`
-        }
+        '@type': 'Person',
+        'name': this.author,
+        'url': this.authorUrl
       },
       'mainEntityOfPage': {
         '@type': 'WebPage',
@@ -271,6 +268,14 @@ export class SeoService {
 
   /**
    * Generate CodeSample structured data
+   *
+   * Note: not currently referenced by any page component. Kept as part of the
+   * service's public schema-generator API for pages that want to emit
+   * SoftwareSourceCode JSON-LD alongside their code blocks.
+   *
+   * `codeRepository` points at `quinnjr/leaven`, the canonical repository and
+   * the `git remote -v` origin. Keep it in sync with the repository links in
+   * `docs/` and `.github/`.
    */
   generateCodeSampleSchema(config: {
     name: string;
@@ -288,7 +293,7 @@ export class SeoService {
       },
       'text': config.codeSnippet,
       'description': config.description ?? '',
-      'codeRepository': 'https://github.com/pegasusheavy/leaven-graphql'
+      'codeRepository': 'https://github.com/quinnjr/leaven'
     };
   }
 }

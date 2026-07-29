@@ -51,7 +51,7 @@ packages/package-name/
     "typescript": "^5.9.3"
   },
   "license": "Apache-2.0",
-  "author": "Pegasus Heavy Industries LLC"
+  "author": "Joseph Quinn"
 }
 ```
 
@@ -76,7 +76,7 @@ Only export public APIs from `index.ts`:
 /**
  * @leaven/package-name - Brief description
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 

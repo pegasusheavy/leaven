@@ -153,7 +153,7 @@ import { SeoService } from '../services/seo.service';
           Try It Out: Your First GraphQL Query
         </h2>
         <p class="text-zinc-400 mb-4">
-          Run this query in the GraphQL playground to test your server:
+          Run this query in the built-in GraphiQL IDE to test your server:
         </p>
         <app-code-block [code]="queryCode" title="query" language="graphql" />
       </section>
@@ -318,7 +318,7 @@ const server = createServer({
   schema,
   port: 4000,
   path: '/graphql',
-  playground: true, // Enable GraphQL Playground
+  playground: true, // Serves GraphiQL at the GraphQL path
 });
 
 const info = server.start();

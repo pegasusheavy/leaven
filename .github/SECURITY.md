@@ -16,13 +16,14 @@ We take the security of Leaven seriously. If you believe you have found a securi
 
 ### How to Report
 
-1. **Email**: Send an email to security@pegasusheavy.com with:
-   - A description of the vulnerability
-   - Steps to reproduce the issue
-   - Potential impact of the vulnerability
-   - Any suggested fixes (optional)
+Use [GitHub's private vulnerability reporting](https://github.com/quinnjr/leaven/security/advisories/new) to open a private security advisory. This is the only channel for reporting vulnerabilities.
 
-2. **GitHub Security Advisories**: You can also use [GitHub's private vulnerability reporting](https://github.com/pegasusheavy/leaven/security/advisories/new).
+Please include:
+
+- A description of the vulnerability
+- Steps to reproduce the issue
+- Potential impact of the vulnerability
+- Any suggested fixes (optional)
 
 ### What to Expect
 
@@ -76,6 +77,6 @@ When using Leaven in production:
 
 Security updates are released as patch versions. We recommend:
 
-- Subscribing to [GitHub Security Advisories](https://github.com/pegasusheavy/leaven/security/advisories)
+- Subscribing to [GitHub Security Advisories](https://github.com/quinnjr/leaven/security/advisories)
 - Using [Dependabot](https://github.com/dependabot) to keep dependencies updated
-- Monitoring the [releases page](https://github.com/pegasusheavy/leaven/releases) for security announcements
+- Monitoring the [releases page](https://github.com/quinnjr/leaven/releases) for security announcements

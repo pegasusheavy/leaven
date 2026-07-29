@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/nestjs - Middleware
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -11,11 +11,17 @@ import {
   Inject,
   type Type,
 } from '@nestjs/common';
+import { formatError, isLeavenError } from '@leaven-graphql/errors';
+import { renderGraphiQL } from '@leaven-graphql/playground';
 import type { GqlContext } from './types';
 // Express types for NestJS middleware compatibility
 interface Request {
   method: string;
   path: string;
+  /** Full URL including the query string, as populated by Express */
+  originalUrl?: string;
+  url?: string;
+  secure?: boolean;
   body?: Record<string, unknown>;
   headers: Record<string, string | string[] | undefined>;
 }
@@ -31,13 +37,39 @@ interface Response {
 type NextFunction = () => void;
 import { LEAVEN_DRIVER, LEAVEN_MODULE_OPTIONS } from './module';
 import { LeavenDriver } from './driver';
-import type { LeavenModuleOptions } from './types';
+import type { CorsOptions, LeavenModuleOptions } from './types';
+
+/**
+ * A `Host` header safe to interpolate into a URL: a hostname (or IPv4
+ * literal) with an optional port, and nothing else. Anything containing
+ * userinfo, a path, whitespace, or other authority metacharacters is
+ * rejected rather than trusted.
+ */
+const VALID_HOST = /^[a-z0-9.-]+(:\d+)?$/i;
 
 /**
  * GraphQL middleware for handling GraphQL requests
  *
  * This middleware intercepts requests to the GraphQL endpoint
  * and processes them through the Leaven driver.
+ *
+ * ## Scope of the transport this middleware implements
+ *
+ * It calls {@link LeavenDriver.execute} directly and deliberately does NOT go
+ * through {@link LeavenDriver.handleRequest}, which is an alternative
+ * Fetch-native entry point for callers that already hold a `Request`/`Response`
+ * pair (a Bun `fetch` handler, for example). Two consequences follow, and both
+ * are intentional rather than oversights:
+ *
+ * - Only `POST` with a JSON body is served. `GET ?query=` is reserved for the
+ *   playground, and `application/graphql` bodies — which `handleRequest`'s
+ *   parser does support — are not accepted here.
+ * - The context's `req`/`res` are the **Express** request and response, not the
+ *   Fetch `Request`/`Response` that `handleRequest` stores. This is what makes
+ *   `ctx.req.user` work under Passport. See {@link GqlContext} for the full
+ *   contract; a resolver that must work behind either entry point should read
+ *   values placed on the context by the `context` factory rather than reaching
+ *   into `ctx.req`.
  */
 @Injectable()
 export class GraphQLMiddleware implements NestMiddleware {
@@ -71,7 +103,11 @@ export class GraphQLMiddleware implements NestMiddleware {
 
     // Handle OPTIONS for CORS preflight
     if (req.method === 'OPTIONS') {
-      this.handleCorsPreFlight(res);
+      if (this.resolveCorsOptions() === null) {
+        // CORS handling is not enabled — let the application handle the request
+        return next();
+      }
+      this.handleCorsPreFlight(req, res);
       return;
     }
 
@@ -82,6 +118,10 @@ export class GraphQLMiddleware implements NestMiddleware {
    * Handle GraphQL request
    */
   private async handleGraphQLRequest(req: Request, res: Response): Promise<void> {
+    // Browsers require CORS headers on the actual response, not just the
+    // preflight, so apply them here as well
+    this.applyCorsHeaders(req, res);
+
     try {
       const { query, variables, operationName } = req.body ?? {};
 
@@ -92,13 +132,18 @@ export class GraphQLMiddleware implements NestMiddleware {
         return;
       }
 
-      // Create context with request info
+      // Create context with request info. `req`/`res` are the Express objects
+      // this middleware was handed — NOT the Fetch pair `driver.handleRequest`
+      // would store — because that is what carries Passport's `req.user`. The
+      // context factory still receives an adapted Fetch `Request` (see
+      // `toFetchRequest`), so the two entry points agree on the factory's
+      // contract even though they disagree on `ctx.req`.
       const context = {
         req,
         res,
         ...(this.options.context
           ? await this.options.context(
-              req as unknown as globalThis.Request,
+              this.toFetchRequest(req),
               res as unknown as globalThis.Response
             )
           : {}),
@@ -111,23 +156,35 @@ export class GraphQLMiddleware implements NestMiddleware {
         operationName as string | undefined
       );
 
-      // Set appropriate status code
-      const status = result.errors?.length ? 200 : 200; // GraphQL always returns 200
-      res.status(status).json(result);
+      // GraphQL-over-HTTP application/json responses always return 200,
+      // even when the result contains errors
+      res.status(200).json(result);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Internal server error';
-      res.status(500).json({
-        errors: [{ message }],
+      // Mirror the driver: a Leaven error keeps its own status and message
+      // (an AuthenticationError from the context factory must reach the
+      // client as 401 so token-refresh flows fire), and unexpected errors
+      // are masked in production only.
+      const isProduction = process.env.NODE_ENV === 'production';
+      const includeStack = this.options.includeStacktraceInErrorResponses ?? false;
+      const formattedError = formatError(error, {
+        maskErrors: !isLeavenError(error) && isProduction && !includeStack,
+        includeStackTrace: includeStack,
+      });
+
+      res.status(isLeavenError(error) ? error.statusCode : 500).json({
+        errors: [formattedError],
       });
     }
   }
 
   /**
-   * Serve GraphQL Playground HTML
+   * Serve GraphiQL HTML
+   *
+   * Delegates to `@leaven-graphql/playground`, which owns the template and
+   * its escaping, rather than maintaining a second copy here.
    */
   private servePlayground(res: Response): void {
-    const path = this.driver.getPath();
-    const html = this.getPlaygroundHtml(path);
+    const html = renderGraphiQL({ endpoint: this.driver.getPath() });
     res.setHeader('Content-Type', 'text/html');
     res.send(html);
   }
@@ -135,22 +192,66 @@ export class GraphQLMiddleware implements NestMiddleware {
   /**
    * Handle CORS preflight request
    */
-  private handleCorsPreFlight(res: Response): void {
+  private handleCorsPreFlight(req: Request, res: Response): void {
+    this.applyCorsHeaders(req, res);
+    res.status(204).end();
+  }
+
+  /**
+   * Resolve the effective CORS configuration, or `null` when this middleware
+   * must not emit CORS headers at all.
+   *
+   * CORS is **opt-in**, matching the `cors` option's documented "Enable CORS"
+   * semantics: leaving it unset emits no `Access-Control-*` headers and leaves
+   * `OPTIONS` preflights to the application. Only an explicit `true` (or an
+   * options object) turns it on — a stock `LeavenModule.forRoot({ schema })`
+   * must never answer every GraphQL POST with `Access-Control-Allow-Origin: *`.
+   * `false` is equivalent to unset and is accepted for explicitness.
+   */
+  private resolveCorsOptions(): CorsOptions | null {
     const corsOptions = this.options.cors;
 
-    if (corsOptions === false) {
-      res.status(204).end();
+    if (corsOptions === undefined || corsOptions === false) {
+      return null;
+    }
+
+    return corsOptions === true ? {} : corsOptions;
+  }
+
+  /**
+   * Apply CORS headers to a response
+   *
+   * Called for both preflight (OPTIONS) responses and actual GraphQL
+   * responses — browsers require `Access-Control-Allow-Origin` on the
+   * actual response as well as the preflight. No-op when CORS was not
+   * enabled (see {@link resolveCorsOptions}).
+   *
+   * The allowed origin is *reflected*, never defaulted to `*` when an
+   * allowlist is configured: `origin: false` emits no origin header at all,
+   * an array emits the request's `Origin` only when the allowlist contains
+   * it, and `origin: true` echoes the request's `Origin`. `Vary: Origin` is
+   * emitted whenever the value depends on the request so caches cannot serve
+   * one origin's response to another, and `*` is never paired with
+   * `credentials: true` (browsers reject that combination outright).
+   */
+  private applyCorsHeaders(req: Request, res: Response): void {
+    const options = this.resolveCorsOptions();
+
+    if (options === null) {
       return;
     }
 
-    const options = corsOptions === true ? {} : corsOptions ?? {};
+    const requestOrigin =
+      typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+    const allowOrigin = this.resolveAllowedOrigin(options, requestOrigin);
 
-    res.setHeader(
-      'Access-Control-Allow-Origin',
-      Array.isArray(options.origin)
-        ? options.origin.join(', ')
-        : typeof options.origin === 'string' ? options.origin : '*'
-    );
+    if (allowOrigin.value !== undefined) {
+      res.setHeader('Access-Control-Allow-Origin', allowOrigin.value);
+    }
+    if (allowOrigin.varies) {
+      res.setHeader('Vary', 'Origin');
+    }
+
     res.setHeader(
       'Access-Control-Allow-Methods',
       Array.isArray(options.methods)
@@ -164,6 +265,15 @@ export class GraphQLMiddleware implements NestMiddleware {
         : options.allowedHeaders ?? 'Content-Type, Authorization'
     );
 
+    if (options.exposedHeaders) {
+      res.setHeader(
+        'Access-Control-Expose-Headers',
+        Array.isArray(options.exposedHeaders)
+          ? options.exposedHeaders.join(', ')
+          : options.exposedHeaders
+      );
+    }
+
     if (options.credentials) {
       res.setHeader('Access-Control-Allow-Credentials', 'true');
     }
@@ -171,41 +281,145 @@ export class GraphQLMiddleware implements NestMiddleware {
     if (options.maxAge) {
       res.setHeader('Access-Control-Max-Age', String(options.maxAge));
     }
-
-    res.status(204).end();
   }
 
   /**
-   * Get the playground HTML
+   * Resolve the `Access-Control-Allow-Origin` value for a request
+   *
+   * Returns `value: undefined` to mean "emit no origin header", and
+   * `varies: true` when the value was derived from the request's `Origin`
+   * header and therefore requires `Vary: Origin`.
    */
-  private getPlaygroundHtml(endpoint: string): string {
-    return `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Leaven GraphQL Playground</title>
-  <link rel="stylesheet" href="https://unpkg.com/graphiql@3.0.9/graphiql.min.css" />
-  <style>
-    body { margin: 0; height: 100vh; }
-    #graphiql { height: 100vh; }
-  </style>
-</head>
-<body>
-  <div id="graphiql">Loading...</div>
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/graphiql@3.0.9/graphiql.min.js"></script>
-  <script>
-    const fetcher = GraphiQL.createFetcher({ url: '${endpoint}' });
-    ReactDOM.createRoot(document.getElementById('graphiql')).render(
-      React.createElement(GraphiQL, { fetcher })
-    );
-  </script>
-</body>
-</html>
-    `.trim();
+  private resolveAllowedOrigin(
+    options: CorsOptions,
+    requestOrigin: string | undefined
+  ): { value?: string; varies: boolean } {
+    const { origin, credentials } = options;
+
+    // Explicitly deny cross-origin access
+    if (origin === false) {
+      return { varies: false };
+    }
+
+    // Allowlist: reflect the request origin only when it is on the list
+    if (Array.isArray(origin)) {
+      return requestOrigin !== undefined && origin.includes(requestOrigin)
+        ? { value: requestOrigin, varies: true }
+        : { varies: true };
+    }
+
+    // A concrete origin is echoed verbatim (unless it is the wildcard, which
+    // is handled below so credentials are still honored correctly)
+    if (typeof origin === 'string' && origin !== '*') {
+      return { value: origin, varies: false };
+    }
+
+    // CORS is enabled but no `origin` was narrowed (`cors: true`, `origin:
+    // '*'`, or an options object that omits `origin`): allow any origin.
+    // Credentialed requests cannot use the wildcard, so the request's own
+    // origin is reflected instead.
+    if (credentials) {
+      return requestOrigin !== undefined
+        ? { value: requestOrigin, varies: true }
+        : { varies: true };
+    }
+
+    if (origin === true) {
+      return requestOrigin !== undefined
+        ? { value: requestOrigin, varies: true }
+        : { value: '*', varies: true };
+    }
+
+    return { value: '*', varies: false };
+  }
+
+  /**
+   * Adapt an Express-style request into a Fetch API `Request`
+   *
+   * The `ContextFactory` contract (types.ts) is declared against the global
+   * Fetch API types, and `driver.createContext` passes genuine Fetch objects.
+   * Adapting here keeps that contract intact **for the factory's first
+   * parameter only**, so factories may call `request.headers.get()`,
+   * `request.json()`, or read `request.url` regardless of how the request
+   * arrived.
+   *
+   * The factory's second parameter is NOT adapted: it is the transport-native
+   * response object, which under this middleware is the Express response.
+   * `response.status(...)` is therefore a method rather than a number and
+   * `response.headers` does not exist — use `response.setHeader(name, value)`
+   * when writing a factory that must work behind `GraphQLMiddleware`.
+   *
+   * The URL's authority is never taken from an untrusted `Host` header
+   * unchecked: `options.publicUrl` wins when configured, otherwise `Host` is
+   * accepted only if it looks like a plain authority, and anything else falls
+   * back to the canonical default. A factory resolving tenancy from
+   * `new URL(request.url).hostname` therefore cannot be steered by a
+   * spoofed header, and a hostile value cannot make `new Request()` throw
+   * and turn every request into a 500.
+   */
+  private toFetchRequest(req: Request): globalThis.Request {
+    const headers = new Headers();
+    for (const [name, value] of Object.entries(req.headers)) {
+      if (value === undefined) {
+        continue;
+      }
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          headers.append(name, entry);
+        }
+      } else {
+        headers.set(name, value);
+      }
+    }
+
+    // `req.path` drops the query string; `originalUrl` keeps it, so a factory
+    // reading `request.url` sees the same URL the driver would have built.
+    const path = req.originalUrl ?? req.url ?? req.path;
+    const url = `${this.resolveOrigin(req)}${path}`;
+
+    const init: RequestInit = { method: req.method, headers };
+    if (req.body !== undefined && req.method !== 'GET' && req.method !== 'HEAD') {
+      if (!headers.has('content-type')) {
+        headers.set('content-type', 'application/json');
+      }
+      init.body = JSON.stringify(req.body);
+    }
+
+    try {
+      return new globalThis.Request(url, init);
+    } catch {
+      // A path that cannot be parsed as a URL must not take the request down
+      return new globalThis.Request(`${this.canonicalOrigin(req)}${this.driver.getPath()}`, init);
+    }
+  }
+
+  /**
+   * Resolve the origin (scheme + authority) for the synthesized request URL
+   *
+   * A configured `publicUrl` always wins; otherwise the `Host` header is used
+   * only when it is a plain authority, and anything else falls back to the
+   * canonical origin.
+   */
+  private resolveOrigin(req: Request): string {
+    if (this.options.publicUrl) {
+      return this.canonicalOrigin(req);
+    }
+
+    const host = req.headers.host;
+    if (typeof host === 'string' && VALID_HOST.test(host)) {
+      return `${req.secure ? 'https' : 'http'}://${host}`;
+    }
+
+    return this.canonicalOrigin(req);
+  }
+
+  /**
+   * The trusted origin used when no configured or trustworthy authority is
+   * available
+   */
+  private canonicalOrigin(req: Request): string {
+    return this.options.publicUrl?.replace(/\/+$/, '')
+      ?? (req.secure ? 'https://localhost' : 'http://localhost');
   }
 }
 

@@ -1,14 +1,20 @@
 /**
  * @leaven-graphql/http - HTTP request handler
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
-import type { GraphQLSchema } from 'graphql';
+import {
+  GraphQLError,
+  type GraphQLSchema,
+  type GraphQLFormattedError,
+  type SourceLocation,
+} from 'graphql';
 import { LeavenExecutor, type ExecutorConfig, type GraphQLRequest } from '@leaven-graphql/core';
 import { createRequestContext, type RequestContextConfig } from '@leaven-graphql/context';
-import { formatError, type ErrorMaskingOptions } from '@leaven-graphql/errors';
+import { formatError, isLeavenError, type ErrorMaskingOptions } from '@leaven-graphql/errors';
+import { renderGraphiQL } from '@leaven-graphql/playground';
 
 import { parseBody, parseQuery, validateRequest } from './request';
 import {
@@ -50,7 +56,7 @@ export interface HandlerConfig<TContext = unknown> {
   cors?: CorsConfig | boolean;
   /** Enable GraphQL playground at GET requests */
   playground?: boolean;
-  /** Path for the GraphQL endpoint (for playground redirect) */
+  /** Path for the GraphQL endpoint (used as the playground's endpoint; default: '/graphql') */
   path?: string;
   /** Error formatting options */
   errorFormatting?: ErrorMaskingOptions;
@@ -58,12 +64,129 @@ export interface HandlerConfig<TContext = unknown> {
   requestContext?: RequestContextConfig;
   /** Response options */
   response?: ResponseOptions;
-  /** Allowed methods (default: GET, POST) */
+  /** Allowed methods (default: GET, POST, OPTIONS) */
   allowedMethods?: string[];
   /** Enable introspection */
   introspection?: boolean;
-  /** Maximum request body size in bytes */
+  /** Maximum request body size in bytes (default: 1_000_000) */
   maxBodySize?: number;
+  /**
+   * Maximum time to spend reading a request body, in milliseconds
+   * (default: 30_000). Bounds slow-loris style trickled uploads.
+   */
+  bodyReadTimeoutMs?: number;
+}
+
+/** Default maximum request body size in bytes */
+const DEFAULT_MAX_BODY_SIZE = 1_000_000;
+
+/** Default deadline for reading a request body, in milliseconds */
+const DEFAULT_BODY_READ_TIMEOUT_MS = 30_000;
+
+/**
+ * Read a request body while enforcing a maximum size.
+ *
+ * Consumes the body as a stream and aborts as soon as the threshold is
+ * crossed, so a chunked request (no Content-Length) or a lying header
+ * cannot cause the whole body to be buffered.
+ *
+ * The read is bounded by `timeoutMs` so a client that trickles bytes cannot
+ * pin a request slot indefinitely.
+ *
+ * Returns a new Request carrying the buffered body (headers preserved so
+ * content-type/boundary survive), or `null` when the limit was exceeded.
+ * Throws when the body could not be read (client abort, stream error, or
+ * the deadline elapsing).
+ */
+async function readBodyWithLimit(
+  request: Request,
+  maxBytes: number,
+  timeoutMs: number
+): Promise<Request | null> {
+  const body = request.body;
+  if (!body) {
+    return request;
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  // An owned timer rather than AbortSignal.timeout: the deadline must be
+  // cancelled once the read finishes, otherwise every completed POST leaves a
+  // live timer, listener and reject closure pinned for the full timeout.
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    deadlineTimer = setTimeout(() => {
+      reject(new Error(`Timed out reading request body after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), deadline]);
+      if (done) {
+        break;
+      }
+      total += value.byteLength;
+      if (total > maxBytes) {
+        // A rejecting cancel() must not turn the intended 413 into a 500.
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    clearTimeout(deadlineTimer);
+  }
+
+  const buffer = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    buffer.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new Request(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: buffer,
+  });
+}
+
+/**
+ * Rebuild a `GraphQLError` from an error the executor already formatted.
+ *
+ * `LeavenExecutor.execute` returns plain `GraphQLFormattedError` objects (via
+ * `GraphQLError.toJSON()`). Feeding one of those back to `formatError` is
+ * destructive: `errorToGraphQL` has no branch for a formatted error, so it
+ * falls through to `new GraphQLError(String(error))` — the message becomes
+ * `"[object Object]"`, path and locations are dropped, and the real code is
+ * overwritten with INTERNAL_ERROR, masking Leaven errors that must never be
+ * masked and driving a spurious 500.
+ *
+ * Reconstructing first makes the round trip lossless, so masking decisions are
+ * made against the error the executor actually produced.
+ */
+function fromFormattedError(formatted: GraphQLFormattedError): GraphQLError {
+  const error = new GraphQLError(formatted.message, {
+    path: formatted.path ? [...formatted.path] : undefined,
+    extensions: formatted.extensions ? { ...formatted.extensions } : undefined,
+  });
+
+  // `locations` are normally derived from AST nodes or source positions, which
+  // a formatted error no longer carries, so restore them directly. The field is
+  // a plain writable property; `readonly` is a compile-time contract only.
+  if (formatted.locations && formatted.locations.length > 0) {
+    (error as { locations?: ReadonlyArray<SourceLocation> }).locations = [
+      ...formatted.locations,
+    ];
+  }
+
+  return error;
 }
 
 /**
@@ -81,6 +204,12 @@ export function createHandler<TContext = unknown>(
 
   const allowedMethods = config.allowedMethods ?? ['GET', 'POST', 'OPTIONS'];
   const corsConfig = config.cors === true ? {} : config.cors || undefined;
+  const maxBodySize = config.maxBodySize ?? DEFAULT_MAX_BODY_SIZE;
+  const bodyReadTimeoutMs =
+    config.bodyReadTimeoutMs ?? DEFAULT_BODY_READ_TIMEOUT_MS;
+  const playgroundHtml = config.playground
+    ? renderGraphiQL({ endpoint: config.path ?? '/graphql' })
+    : null;
 
   return async (request: Request): Promise<Response> => {
     const method = request.method.toUpperCase();
@@ -107,14 +236,36 @@ export function createHandler<TContext = unknown>(
     try {
       // Parse the request
       const url = new URL(request.url);
+
+      // Serve the GraphQL playground to browsers: GET request, playground
+      // enabled, Accepts HTML, and no query parameter to execute.
+      if (
+        method === 'GET' &&
+        playgroundHtml !== null &&
+        (request.headers.get('accept') ?? '').includes('text/html') &&
+        !url.searchParams.has('query')
+      ) {
+        return new Response(playgroundHtml, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            ...(corsConfig !== undefined ? corsHeaders(request, corsConfig) : {}),
+          },
+        });
+      }
+
       const queryParams = parseQuery(url);
 
       let body: Awaited<ReturnType<typeof parseBody>> = {};
       if (method === 'POST') {
-        // Check body size
-        if (config.maxBodySize) {
-          const contentLength = request.headers.get('content-length');
-          if (contentLength && parseInt(contentLength) > config.maxBodySize) {
+        // Enforce maximum body size.
+        //
+        // Fast path: an honest Content-Length that exceeds the limit is
+        // rejected without reading the body at all.
+        const contentLength = request.headers.get('content-length');
+        if (contentLength !== null) {
+          const declaredLength = Number.parseInt(contentLength, 10);
+          if (!Number.isNaN(declaredLength) && declaredLength > maxBodySize) {
             return buildErrorResponse(
               'Request body too large',
               413,
@@ -124,7 +275,45 @@ export function createHandler<TContext = unknown>(
           }
         }
 
-        body = await parseBody(request);
+        // The header may be absent (chunked encoding), malformed, or
+        // lying, so the limit is always enforced while reading.
+        let limited: Request | null;
+        try {
+          limited = await readBodyWithLimit(
+            request,
+            maxBodySize,
+            bodyReadTimeoutMs
+          );
+        } catch (readError) {
+          // A client abort, stream error, or read deadline is a bad request,
+          // not an internal failure — and its raw text is not ours to leak.
+          const message =
+            readError instanceof Error
+              ? readError.message
+              : 'Failed to read request body';
+          return buildErrorResponse(message, 400, 'BAD_REQUEST', responseOptions);
+        }
+
+        if (limited === null) {
+          return buildErrorResponse(
+            'Request body too large',
+            413,
+            'PAYLOAD_TOO_LARGE',
+            responseOptions
+          );
+        }
+
+        const bodyRequest = limited;
+
+        try {
+          body = await parseBody(bodyRequest);
+        } catch (parseError) {
+          const message =
+            parseError instanceof Error
+              ? parseError.message
+              : 'Failed to parse request body';
+          return buildErrorResponse(message, 400, 'BAD_REQUEST', responseOptions);
+        }
       }
 
       // Validate the request
@@ -152,20 +341,32 @@ export function createHandler<TContext = unknown>(
       // Execute the query
       const result = await executor.execute(graphqlRequest, context);
 
-      // Format errors if configured
+      // Format errors if configured. The executor hands back already-formatted
+      // errors, so each one is rebuilt into a GraphQLError first — formatting a
+      // formatted error would stringify it to "[object Object]".
       if (result.response.errors && config.errorFormatting) {
         result.response = {
           ...result.response,
           errors: result.response.errors.map((e) =>
-            formatError(e, config.errorFormatting)
+            formatError(fromFormattedError(e), config.errorFormatting)
           ),
         };
       }
 
       return buildResponse(result.response, responseOptions);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Internal server error';
-      return buildErrorResponse(message, 500, 'INTERNAL_ERROR', responseOptions);
+      // Anything thrown outside execution (notably the context factory) lands
+      // here, so it must go through the same masking as execution errors —
+      // otherwise raw internal text (DSN strings, connection failures) is
+      // returned verbatim to unauthenticated callers. formatError preserves
+      // LeavenError messages and masks the rest.
+      const formatted = formatError(error, config.errorFormatting);
+      // LeavenError carries its documented HTTP status; everything else is a 500.
+      const status = isLeavenError(error) ? error.statusCode : 500;
+      const code =
+        (formatted.extensions?.code as string | undefined) ??
+        (isLeavenError(error) ? error.code : 'INTERNAL_ERROR');
+      return buildErrorResponse(formatted.message, status, code, responseOptions);
     }
   };
 }

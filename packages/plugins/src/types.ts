@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/plugins - Plugin types
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -70,11 +70,17 @@ export type AfterValidateHook = (
 
 /**
  * Hook called before execution
+ *
+ * Returning a {@link GraphQLResponse} short-circuits the pipeline: the
+ * `PluginManager` stops invoking later `beforeExecute` hooks and surfaces the
+ * response to its caller, which may use it as the operation result and skip
+ * execution entirely (e.g. to serve a cached response). Returning `void`
+ * preserves the previous behavior and lets execution proceed normally.
  */
 export type BeforeExecuteHook = (
   document: DocumentNode,
   context: PluginContext
-) => void | Promise<void>;
+) => GraphQLResponse | void | Promise<GraphQLResponse | void>;
 
 /**
  * Hook called after execution

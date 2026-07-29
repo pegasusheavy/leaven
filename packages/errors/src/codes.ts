@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/errors - Error codes
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -12,6 +12,7 @@ export enum ErrorCode {
   // General errors
   INTERNAL_ERROR = 'INTERNAL_ERROR',
   BAD_REQUEST = 'BAD_REQUEST',
+  PAYLOAD_TOO_LARGE = 'PAYLOAD_TOO_LARGE',
 
   // Validation errors
   VALIDATION_ERROR = 'VALIDATION_ERROR',
@@ -52,6 +53,10 @@ export const ERROR_CODES: Record<ErrorCode, { status: number; message: string }>
   [ErrorCode.BAD_REQUEST]: {
     status: 400,
     message: 'Bad request',
+  },
+  [ErrorCode.PAYLOAD_TOO_LARGE]: {
+    status: 413,
+    message: 'Request payload is too large',
   },
   [ErrorCode.VALIDATION_ERROR]: {
     status: 400,
@@ -108,13 +113,16 @@ export const ERROR_CODES: Record<ErrorCode, { status: number; message: string }>
 };
 
 /**
+ * Set of all known error codes, hoisted to module level so per-error hot
+ * paths get O(1) membership checks without allocating on every call
+ */
+const ERROR_CODE_SET: ReadonlySet<string> = new Set(Object.values(ErrorCode));
+
+/**
  * Get error code from a code string
  */
 export function getErrorCode(code: string): ErrorCode | null {
-  if (Object.values(ErrorCode).includes(code as ErrorCode)) {
-    return code as ErrorCode;
-  }
-  return null;
+  return ERROR_CODE_SET.has(code) ? (code as ErrorCode) : null;
 }
 
 /**

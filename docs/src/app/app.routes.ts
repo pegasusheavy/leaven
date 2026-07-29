@@ -71,10 +71,14 @@ export const routes: Routes = [
         loadComponent: () => import('./pages/playground').then(m => m.PlaygroundComponent),
         title: 'GraphQL Playground | Leaven Documentation'
       },
-      // Catch-all redirect to quick-start
+      // Unknown paths fall through to NotFoundComponent, which emits
+      // `robots: noindex` and no structured data. Never point the `**` route at
+      // a page that emits TechArticle structured data: that would tell search
+      // engines every typo'd or stale URL is a real article.
       {
         path: '**',
-        redirectTo: 'quick-start'
+        loadComponent: () => import('./pages/not-found').then(m => m.NotFoundComponent),
+        title: 'Page Not Found | Leaven Documentation'
       }
     ],
   },

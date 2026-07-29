@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/core - Cache interface definitions
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -21,15 +21,28 @@ export interface CachedValidation {
  * Cache statistics
  */
 export interface CacheStats {
-  /** Current number of entries */
+  /**
+   * Current number of entries.
+   *
+   * NOTE: Exact only for backends that can count their own keyspace (the
+   * in-memory `DocumentCache`). A distributed backend such as
+   * `RedisDocumentCache` maintains this as a counter updated on writes and
+   * deletes, and cannot observe server-side TTL expirations — so on a cache
+   * with a TTL it is an upper bound that drifts upward.
+   */
   size: number;
   /** Maximum allowed entries */
   maxSize: number;
-  /** Hit rate (hits / size) */
+  /**
+   * Average number of hits per cached entry (totalHits / size).
+   *
+   * NOTE: This is NOT a hit/miss ratio — misses are not tracked at all, so
+   * the value is unbounded and routinely exceeds 1 on a warm cache.
+   */
   hitRate: number;
   /** Total number of cache hits */
   totalHits: number;
-  /** Number of entries (alias for size) */
+  /** Number of entries (alias for `size` — same accuracy caveat) */
   entries: number;
 }
 
@@ -61,7 +74,11 @@ export interface IDocumentCache {
   setValidation(query: string, validation: CachedValidation): void | Promise<void>;
 
   /**
-   * Set document with validation result in a single operation
+   * Set document with validation result in a single operation.
+   *
+   * Preferred over `set()` followed by `setValidation()` on any cold path: a
+   * remote backend would otherwise have to re-read the entry and re-serialize
+   * the `DocumentNode` the caller already holds.
    */
   setWithValidation(
     query: string,

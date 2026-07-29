@@ -1,21 +1,21 @@
 # Default owners for everything in the repo
-* @pegasusheavy/leaven-maintainers
+* @quinnjr
 
 # Core packages
-/packages/core/ @pegasusheavy/leaven-core
-/packages/http/ @pegasusheavy/leaven-core
-/packages/ws/ @pegasusheavy/leaven-core
+/packages/core/ @quinnjr
+/packages/http/ @quinnjr
+/packages/ws/ @quinnjr
 
 # Integration packages
-/packages/nestjs/ @pegasusheavy/leaven-integrations
+/packages/nestjs/ @quinnjr
 
 # Documentation
-/docs/ @pegasusheavy/leaven-docs
-*.md @pegasusheavy/leaven-docs
+/docs/ @quinnjr
+*.md @quinnjr
 
 # CI/CD
-/.github/ @pegasusheavy/leaven-maintainers
+/.github/ @quinnjr
 
 # Security-sensitive files
-/SECURITY.md @pegasusheavy/leaven-maintainers
-/.github/workflows/release.yml @pegasusheavy/leaven-maintainers
+/SECURITY.md @quinnjr
+/.github/workflows/release.yml @quinnjr

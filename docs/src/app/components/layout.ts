@@ -48,6 +48,7 @@ interface NavSection {
 
       <!-- Sidebar - Bakery Menu Board -->
       <aside
+        id="sidebar"
         class="fixed top-0 left-0 h-full w-72 bg-gradient-to-b from-amber-950/95 via-orange-950/90 to-amber-950/95 backdrop-blur-xl border-r border-amber-800/30 z-40 flex flex-col transition-transform duration-300"
         [class.translate-x-0]="sidebarOpen()"
         [class.-translate-x-full]="!sidebarOpen()"
@@ -109,7 +110,7 @@ interface NavSection {
             <span class="text-amber-700/40">Fresh Daily</span>
           </div>
           <a
-            href="https://github.com/pegasusheavy/leaven-graphql"
+            href="https://github.com/quinnjr/leaven"
             target="_blank"
             rel="noopener noreferrer"
             class="flex items-center justify-center gap-2 w-full py-2 px-3 rounded-lg bg-amber-900/30 border border-amber-800/30 text-amber-400/70 hover:text-amber-300 hover:bg-amber-900/50 transition-colors text-sm"

@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/context - Request context
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -42,32 +42,37 @@ export class RequestContext implements BaseContext {
   public readonly requestId: string;
   public readonly startTime: number;
   public readonly request: RequestInfo;
+  private readonly config: RequestContextConfig | undefined;
+  private readonly normalizedHeaders: Map<string, string>;
 
   constructor(request: RequestInfo, config?: RequestContextConfig) {
     this.requestId = config?.generateRequestId?.() ?? generateId();
     this.startTime = Date.now();
     this.request = request;
+    this.config = config;
+    this.normalizedHeaders = new Map();
+    for (const [key, value] of Object.entries(request.headers)) {
+      this.normalizedHeaders.set(key.toLowerCase(), value);
+    }
   }
 
   /**
-   * Get a header value
+   * Get a header value (case-insensitive)
    */
   public getHeader(name: string): string | undefined {
-    const lowerName = name.toLowerCase();
-    for (const [key, value] of Object.entries(this.request.headers)) {
-      if (key.toLowerCase() === lowerName) {
-        return value;
-      }
-    }
-    return undefined;
+    return this.normalizedHeaders.get(name.toLowerCase());
   }
 
   /**
    * Get the client IP address
+   *
+   * Uses the configuration provided at construction time by default; a
+   * config passed here overrides it for this call only.
    */
   public getClientIp(config?: RequestContextConfig): string | undefined {
-    if (config?.trustProxy) {
-      const proxyHeaders = config.proxyHeaders ?? [
+    const effectiveConfig = config ?? this.config;
+    if (effectiveConfig?.trustProxy) {
+      const proxyHeaders = effectiveConfig.proxyHeaders ?? [
         'x-forwarded-for',
         'x-real-ip',
         'cf-connecting-ip',
@@ -98,7 +103,14 @@ export class RequestContext implements BaseContext {
   public extend<T extends Record<string, unknown>>(
     properties: T
   ): RequestContext & T {
-    return Object.assign(Object.create(this), properties);
+    // Copy own properties onto a fresh object sharing this instance's
+    // prototype, so the child has real own properties (visible to spread,
+    // Object.keys, JSON round-trips) while class methods are preserved.
+    return Object.assign(
+      Object.create(Object.getPrototypeOf(this) as object) as RequestContext,
+      this,
+      properties
+    );
   }
 
   /**
@@ -120,20 +132,25 @@ export class RequestContext implements BaseContext {
 }
 
 /**
- * Generate a unique request ID
+ * Generate a unique request ID using cryptographically secure randomness
  */
 function generateId(): string {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 10);
-  return `${timestamp}-${random}`;
+  return crypto.randomUUID();
 }
 
 /**
  * Create a request context from a Bun request
+ *
+ * @param request - The incoming request
+ * @param config - Optional request context configuration
+ * @param ip - Optional client (peer) IP address. `Request` does not carry the
+ *   socket address, so the HTTP layer should supply it, e.g. from
+ *   `server.requestIP(request)?.address` in a Bun server.
  */
 export function createRequestContext(
   request: Request,
-  config?: RequestContextConfig
+  config?: RequestContextConfig,
+  ip?: string
 ): RequestContext {
   const headers: Record<string, string> = {};
   request.headers.forEach((value, key) => {
@@ -149,6 +166,10 @@ export function createRequestContext(
 
   if (userAgent) {
     requestInfo.userAgent = userAgent;
+  }
+
+  if (ip) {
+    requestInfo.ip = ip;
   }
 
   return new RequestContext(requestInfo, config);
