@@ -187,10 +187,10 @@ interface ServerConfig<TContext = unknown> extends HandlerConfig<TContext> {
   port?: number;
   hostname?: string;
   development?: boolean;
-  routes?: Record<string, RouteHandler>;
+  routes?: Record<string, GraphQLHandler | ((request: Request) => Response | Promise<Response>)>;
   fallback?: (request: Request) => Response | Promise<Response>;
   websocket?: WebSocketHandler;
-  onStart?: (server: Server) => void;
+  onStart?: (server: Server<unknown>) => void;
   onStop?: () => void;
   onError?: (error: Error, request: Request) => Response | Promise<Response>;
 }
@@ -228,7 +228,7 @@ class LeavenServer {
   start(): ServerInfo;
   stop(): void;
   reload(): void;
-  getServer(): Server | null;
+  getServer(): Server<unknown> | null;
   isRunning(): boolean;
 }
 

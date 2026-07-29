@@ -30,7 +30,10 @@ builder.addQueryFields({
   user: {
     type: 'User',
     args: { id: { type: 'ID!' } },
-    resolve: (_parent, { id }, context) => context.db.users.findById(id),
+    // SchemaBuilder types resolve() as (unknown, unknown, unknown, unknown),
+    // so a strict build narrows the arguments it needs.
+    resolve: (_parent, args, context) =>
+      (context as AppContext).db.users.findById((args as { id: string }).id),
   },
 });
 
@@ -85,11 +88,14 @@ builder.addQueryFields({
   user: {
     type: 'User',
     args: { id: { type: 'ID!' } },
-    resolve: (_parent, { id }, context) => context.db.users.findById(id),
+    // SchemaBuilder types resolve() as (unknown, unknown, unknown, unknown),
+    // so a strict build narrows the arguments it needs.
+    resolve: (_parent, args, context) =>
+      (context as AppContext).db.users.findById((args as { id: string }).id),
   },
   users: {
     type: '[User!]!',
-    resolve: (_parent, _args, context) => context.db.users.findAll(),
+    resolve: (_parent, _args, context) => (context as AppContext).db.users.findAll(),
   },
 });
 
@@ -98,7 +104,8 @@ builder.addMutationFields({
   createUser: {
     type: 'User!',
     args: { input: { type: 'CreateUserInput!' } },
-    resolve: (_parent, { input }, context) => context.db.users.create(input),
+    resolve: (_parent, args, context) =>
+      (context as AppContext).db.users.create((args as { input: unknown }).input),
   },
 });
 
@@ -107,7 +114,8 @@ builder.addMutationFields({
 builder.addSubscriptionFields({
   userCreated: {
     type: 'User!',
-    subscribe: (_parent, _args, context) => context.pubsub.subscribe('userCreated'),
+    subscribe: (_parent, _args, context) =>
+      (context as AppContext).pubsub.subscribe('userCreated'),
   },
 });
 
@@ -146,7 +154,8 @@ builder.addType({
 builder.addUnion({
   name: 'Pet',
   types: ['Cat', 'Dog'],
-  resolveType: (value) => (value.meows !== undefined ? 'Cat' : 'Dog'),
+  // `resolveType` receives `unknown`, so narrow it here.
+  resolveType: (value) => ((value as { meows?: boolean }).meows !== undefined ? 'Cat' : 'Dog'),
 });
 ```
 
@@ -166,7 +175,11 @@ builder.addType({
 
 builder.applyResolvers({
   User: {
-    fullName: (user) => `${user.firstName} ${user.lastName}`,
+    // Parent values arrive as `unknown`; narrow at the point of use.
+    fullName: (user) => {
+      const { firstName, lastName } = user as { firstName: string; lastName: string };
+      return `${firstName} ${lastName}`;
+    },
   },
 });
 ```
@@ -240,22 +253,27 @@ resolver maps as separate arguments, not as an array.
 ```typescript
 import { createResolvers, mergeResolvers } from '@leaven-graphql/schema';
 
-const userResolvers = createResolvers({
+// The context type parameter is what makes `context` typed inside a resolver;
+// parent values stay `unknown`, so narrow them where you use them.
+const userResolvers = createResolvers<AppContext>({
   Query: {
-    user: async (_parent, { id }, context) => context.db.users.findById(id),
+    user: async (_parent, args, context) =>
+      context.db.users.findById((args as { id: string }).id),
     users: async (_parent, _args, context) => context.db.users.findAll(),
   },
   User: {
-    posts: async (user, _args, context) => context.db.posts.findByAuthor(user.id),
+    posts: async (user, _args, context) =>
+      context.db.posts.findByAuthor((user as User).id),
   },
 });
 
-const postResolvers = createResolvers({
+const postResolvers = createResolvers<AppContext>({
   Query: {
     posts: async (_parent, _args, context) => context.db.posts.findAll(),
   },
   Post: {
-    author: async (post, _args, context) => context.db.users.findById(post.authorId),
+    author: async (post, _args, context) =>
+      context.db.users.findById((post as Post).authorId),
   },
 });
 
@@ -269,7 +287,7 @@ Helpers for common resolver shapes:
 import { wrapResolver, defaultResolver, constantResolver } from '@leaven-graphql/schema';
 
 // Wrap a resolver with middleware
-const logged = wrapResolver(
+const logged = wrapResolver<unknown, unknown, AppContext, Record<string, unknown>>(
   (parent, args, context, info) => context.db.users.findAll(),
   (next, parent, args, context, info) => {
     console.log(info.fieldName);
@@ -293,6 +311,7 @@ import {
   loadSchemaFromDirectory,
   loadSchemaFromGlob,
   loadTypeDefsFromDirectory,
+  mergeSchemasFromStrings,
 } from '@leaven-graphql/schema';
 
 // Load a single file
@@ -318,6 +337,7 @@ Directive argument types are declared as `'String'`, `'Boolean'` or `'Int'`.
 ```typescript
 import { DirectiveLocation } from 'graphql';
 import {
+  cacheControlDirective,
   createDirective,
   addDirective,
   addDirectives,
@@ -484,14 +504,24 @@ function wrapResolver<TResult, TParent, TContext, TArgs>(
 function defaultResolver<TParent>(fieldName: keyof TParent): ResolverFn;
 function constantResolver<TResult>(value: TResult): ResolverFn;
 
-type ResolverFn<TResult, TParent, TContext, TArgs> = (
+type ResolverFn<
+  TResult = unknown,
+  TParent = unknown,
+  TContext = unknown,
+  TArgs = Record<string, unknown>,
+> = (
   parent: TParent,
   args: TArgs,
   context: TContext,
   info: GraphQLResolveInfo
 ) => TResult | Promise<TResult>;
 
-interface FieldResolver<TResult, TParent, TContext, TArgs> {
+interface FieldResolver<
+  TResult = unknown,
+  TParent = unknown,
+  TContext = unknown,
+  TArgs = Record<string, unknown>,
+> {
   resolve?: ResolverFn<TResult, TParent, TContext, TArgs>;
   subscribe?: ResolverFn<AsyncIterator<TResult>, TParent, TContext, TArgs>;
 }

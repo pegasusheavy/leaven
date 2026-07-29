@@ -190,6 +190,7 @@ export class ErrorsComponent implements OnInit {
     ]);
   }
 
+  // doc-check: skip - shell command, not TypeScript
   installCode = `bun add @leaven-graphql/errors`;
 
   typesCode = `import {
@@ -295,7 +296,8 @@ const formattedErrors = formatErrors(errors, options);
 // Convert any error to a GraphQLError
 const graphqlError = errorToGraphQL(error);`;
 
-  maskCode = `import { maskError } from '@leaven-graphql/errors';
+  maskCode = `import { createServer } from '@leaven-graphql/http';
+import { maskError } from '@leaven-graphql/errors';
 
 // Mask unexpected errors. Leaven errors (validation, auth, not-found, ...)
 // are recognized as intentional and are never masked.

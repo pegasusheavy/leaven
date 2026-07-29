@@ -134,8 +134,10 @@ export class InstallationComponent implements OnInit {
     });
   }
 
+  // doc-check: skip - shell command, not TypeScript
   fullInstall = `bun add @leaven-graphql/leaven graphql`;
 
+  // doc-check: skip - shell commands, not TypeScript
   minimalInstall = `# Core only (for programmatic use)
 bun add @leaven-graphql/core graphql
 
@@ -145,6 +147,7 @@ bun add @leaven-graphql/core @leaven-graphql/http graphql
 # With WebSocket subscriptions
 bun add @leaven-graphql/core @leaven-graphql/http @leaven-graphql/ws graphql`;
 
+  // doc-check: skip - JSON, not TypeScript
   tsconfigCode = `{
   "compilerOptions": {
     "target": "ES2022",

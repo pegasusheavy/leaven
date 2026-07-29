@@ -214,6 +214,7 @@ export class WebsocketsComponent implements OnInit {
     ]);
   }
 
+  // doc-check: skip - shell command, not TypeScript
   installCode = `bun add @leaven-graphql/ws @leaven-graphql/core graphql`;
 
   quickStartCode = `import { createServer } from '@leaven-graphql/http';
@@ -283,9 +284,11 @@ customPubSub.subscribe('user.#', onAnyUserEvent);
 const iterator = pubsub.asyncIterator('messages:new');
 const multi = pubsub.asyncIterator(['messages:new', 'messages:edited']);
 
-// Use in resolver
-for await (const message of iterator) {
-  yield message;
+// Use in a subscribe resolver
+async function* messageAdded() {
+  for await (const event of iterator) {
+    yield event;
+  }
 }
 
 // Introspection helpers
@@ -395,6 +398,7 @@ if (message.type === MessageType.Ping) {
   socket.send(formatMessage(createPongMessage()));
 }`;
 
+  // doc-check: skip - GraphQL SDL, not TypeScript
   schemaCode = `type Subscription {
   # Simple subscription
   messageAdded: Message!

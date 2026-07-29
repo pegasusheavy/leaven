@@ -271,8 +271,10 @@ export class QuickStartComponent implements OnInit {
     );
   }
 
+  // doc-check: skip - shell command, not TypeScript
   installCode = `bun add @leaven-graphql/leaven graphql`;
 
+  // doc-check: skip - shell command, not TypeScript
   minimalInstallCode = `bun add @leaven-graphql/core @leaven-graphql/http graphql`;
 
   schemaCode = `import {
@@ -324,8 +326,10 @@ const server = createServer({
 const info = server.start();
 console.log(\`🚀 Server ready at \${info.url}\`);`;
 
+  // doc-check: skip - shell command, not TypeScript
   runCode = `bun run server.ts`;
 
+  // doc-check: skip - GraphQL query document, not TypeScript
   queryCode = `query {
   hello
   users {
@@ -335,6 +339,7 @@ console.log(\`🚀 Server ready at \${info.url}\`);`;
   }
 }`;
 
+  // doc-check: skip - JSON response, not TypeScript
   responseCode = `{
   "data": {
     "hello": "Hello, Leaven!",

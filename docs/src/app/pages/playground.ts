@@ -224,6 +224,7 @@ export class PlaygroundComponent implements OnInit {
     ]);
   }
 
+  // doc-check: skip - shell command, not TypeScript
   installCode = `bun add @leaven-graphql/playground`;
 
   quickStartCode = `import { createServer } from '@leaven-graphql/http';
@@ -362,7 +363,7 @@ const server = createServer({
 });
 
 // Or use environment variable
-const server = createServer({
+const serverFromEnv = createServer({
   schema,
   playground: process.env.ENABLE_PLAYGROUND === 'true',
 });`;

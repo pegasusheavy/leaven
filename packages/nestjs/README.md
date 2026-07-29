@@ -157,12 +157,20 @@ export class AppModule {}
 
 ```typescript
 import { Resolver, Query } from '@nestjs/graphql';
-import { Context, Args, Info, Root } from '@leaven-graphql/nestjs';
+import { Context, Args, Info, Root, type GqlContext } from '@leaven-graphql/nestjs';
+
+// `GqlContext` is generic over the request type. Parameterise it with whatever
+// your authentication layer attaches to the request so `ctx.req` stays typed.
+interface AuthenticatedRequest extends Request {
+  user: User;
+}
 
 @Resolver()
 export class UserResolver {
+  constructor(private readonly userService: UserService) {}
+
   @Query(() => User)
-  async me(@Context() ctx: GqlContext) {
+  async me(@Context() ctx: GqlContext<AuthenticatedRequest>) {
     return ctx.req.user;
   }
 
@@ -181,6 +189,8 @@ import { Complexity, Description, CacheHint, Deprecated } from '@leaven-graphql/
 
 @Resolver()
 export class PostResolver {
+  constructor(private readonly postService: PostService) {}
+
   @Query(() => [Post])
   @Complexity(10)
   @Description('Fetch all posts')
@@ -230,7 +240,8 @@ The other two carry caveats:
 
 ```typescript
 import { UseGuards } from '@nestjs/common';
-import { AuthGuard, Public } from '@leaven-graphql/nestjs';
+import { Resolver, Query } from '@nestjs/graphql';
+import { AuthGuard, Context, Public, type GqlContext } from '@leaven-graphql/nestjs';
 
 @Resolver()
 @UseGuards(AuthGuard)
@@ -252,11 +263,14 @@ export class UserResolver {
 
 ```typescript
 import { UseGuards } from '@nestjs/common';
-import { AuthGuard, RolesGuard, Roles } from '@leaven-graphql/nestjs';
+import { Resolver, Query, Mutation } from '@nestjs/graphql';
+import { AuthGuard, Args, RolesGuard, Roles } from '@leaven-graphql/nestjs';
 
 @Resolver()
 @UseGuards(AuthGuard, RolesGuard)
 export class AdminResolver {
+  constructor(private readonly userService: UserService) {}
+
   @Query(() => [User])
   @Roles('admin')
   async users() {
@@ -275,11 +289,14 @@ export class AdminResolver {
 
 ```typescript
 import { UseGuards } from '@nestjs/common';
-import { AuthGuard, PermissionsGuard, Permissions } from '@leaven-graphql/nestjs';
+import { Resolver, Mutation } from '@nestjs/graphql';
+import { AuthGuard, Args, PermissionsGuard, Permissions } from '@leaven-graphql/nestjs';
 
 @Resolver()
 @UseGuards(AuthGuard, PermissionsGuard)
 export class PostResolver {
+  constructor(private readonly postService: PostService) {}
+
   @Mutation(() => Post)
   @Permissions('posts:write')
   async createPost(@Args('input') input: CreatePostInput) {
@@ -300,6 +317,7 @@ export class PostResolver {
 
 ```typescript
 import { UseInterceptors } from '@nestjs/common';
+import { Resolver } from '@nestjs/graphql';
 import { LoggingInterceptor } from '@leaven-graphql/nestjs';
 
 @Resolver()
@@ -313,6 +331,7 @@ export class UserResolver {
 
 ```typescript
 import { UseInterceptors } from '@nestjs/common';
+import { Resolver } from '@nestjs/graphql';
 import { MetricsInterceptor } from '@leaven-graphql/nestjs';
 
 @Resolver()
@@ -325,6 +344,7 @@ export class UserResolver {
 ### Custom Context Decorator
 
 ```typescript
+import { Resolver, Query } from '@nestjs/graphql';
 import { createContextDecorator } from '@leaven-graphql/nestjs';
 
 // Create a custom decorator for accessing the current user
@@ -333,6 +353,8 @@ export const CurrentUser = createContextDecorator<User>('user');
 // Usage
 @Resolver()
 export class ProfileResolver {
+  constructor(private readonly profileService: ProfileService) {}
+
   @Query(() => Profile)
   async profile(@CurrentUser() user: User) {
     return this.profileService.getByUserId(user.id);
@@ -438,7 +460,9 @@ async function bootstrap() {
         pathname === subscriptions.getPath() &&
         request.headers.get('upgrade')?.toLowerCase() === 'websocket'
       ) {
-        return server.upgrade(request)
+        // Bun requires the `data` option whenever the socket's data type is
+        // not `undefined`; nothing is stashed here.
+        return server.upgrade(request, { data: undefined })
           ? undefined
           : new Response('Upgrade failed', { status: 400 });
       }
@@ -464,6 +488,7 @@ If a hook needs the original request (to read a cookie or the `Sec-WebSocket-Pro
 header, say), skip the packaged config and call `handleOpen` yourself with the
 request in hand:
 
+<!-- doc-check: skip - object-literal excerpt, not a standalone module -->
 ```typescript
 websocket: {
   open: (socket) => subscriptions.handleOpen(socket, socket.data.request),
@@ -497,7 +522,8 @@ export class MessageResolver {
   constructor(@InjectPubSub() private readonly pubSub: PubSub) {}
 
   @Subscription(() => Message, {
-    filter: (payload, variables) => payload.roomId === variables.roomId,
+    filter: (payload, variables) =>
+      (payload as { roomId: string }).roomId === (variables as { roomId: string }).roomId,
   })
   messageAdded() {
     return this.pubSub.asyncIterator('MESSAGE_ADDED');
@@ -520,6 +546,7 @@ preserves the decorated method's return kind: a method returning an async
 iterable still returns one, so `for await (const event of resolver.messageAdded())`
 works in tests and direct callers.
 
+<!-- doc-check: skip - class-member excerpt, not a standalone module -->
 ```typescript
 import { SubscriptionFilter } from '@leaven-graphql/nestjs';
 
@@ -727,6 +754,8 @@ import { AuthorizationError } from '@leaven-graphql/errors';
 })
 export class AppModule {}
 ```
+
+<!-- doc-check: skip - defines `resolvers` for the module block above it, so checking it as a continuation would be a forward reference -->
 
 ```typescript
 const resolvers = {

@@ -128,8 +128,11 @@ const executor = new LeavenExecutor({
         console.error('Validation errors:', result.errors);
       }
     },
+    // `context` is your context value, typed by the executor's type
+    // parameter — it is not the GraphQL request, so operation details come
+    // from the document.
     async onExecute(context, document) {
-      console.log('Executing:', context.operationName);
+      console.log('Executing:', document.definitions.length, 'definition(s)');
     },
     async onExecuted(result) {
       console.log('Execution completed');
@@ -210,10 +213,55 @@ const result = await executor.execute<QueryData>(
 | `hooks` | `ExecutionHooks` | `undefined` | Lifecycle hooks |
 | `metrics` | `boolean` | `false` | Enable execution metrics (reported by `execute` only) |
 | `introspection` | `boolean` | `true` | Enable introspection queries |
+| `formatExecutionError` | `(error: GraphQLError) => GraphQLFormattedError` | `error.toJSON()` | Serialize an execution error while the graphql-js `GraphQLError` is still intact |
 
 `maxDepth`, `maxComplexity` and `hooks` apply to subscriptions as well as
 queries and mutations — `execute` and `subscribe` share one
 parse/validate/compile pipeline.
+
+### `formatExecutionError`
+
+The executor otherwise reports execution errors as `error.toJSON()`, which emits
+only `{ message, locations, path, extensions }` and **drops `originalError`**.
+That loss matters for a transport built on a framework with its own error
+currency: graphql-js sets `extensions = extensions ?? originalError?.extensions
+?? {}`, so a `LeavenError` (which carries `extensions`) survives serialization
+with its `code`, but a framework exception with no `extensions` property — a
+NestJS `HttpException`, say — arrives with `extensions: {}` and is
+indistinguishable from a crash. This hook runs *before* `toJSON()`, so it is the
+only place such an error can still be recognised and mapped to an `ErrorCode`.
+
+```typescript
+import { LeavenExecutor } from '@leaven-graphql/core';
+
+const executor = new LeavenExecutor({
+  schema,
+  formatExecutionError: (error) => {
+    const cause = error.originalError;
+    if (cause instanceof HttpException) {
+      return {
+        message: cause.message,
+        path: error.path,
+        locations: error.locations,
+        extensions: { ...error.extensions, code: codeForStatus(cause.getStatus()) },
+      };
+    }
+    return error.toJSON();
+  },
+});
+```
+
+It applies to the errors of an execution result and of both subscription paths —
+the places where a resolver's `originalError` exists. It is deliberately *not*
+applied to parse, validation or complexity rejections, which are synthesised by
+Leaven, never carry a framework `originalError`, and already guarantee an
+`ErrorCode`; nor to an error thrown out of the executor itself, which the errors
+package formats.
+
+Do not confuse it with a transport's `formatError` option (for example
+`LeavenModuleOptions.formatError`), which is a final, response-level pass over an
+already-serialized `GraphQLFormattedError`. `formatExecutionError` is
+executor-level and receives the live `GraphQLError`.
 
 ## API Reference
 

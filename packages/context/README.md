@@ -283,7 +283,11 @@ keeps the prototype of the context the factory produced — so a class-based
 context such as `RequestContext` keeps its methods:
 
 ```typescript
-import { RequestContext, createRequestContext } from '@leaven-graphql/context';
+import {
+  RequestContext,
+  createContextBuilder,
+  createRequestContext,
+} from '@leaven-graphql/context';
 
 const builder = createContextBuilder<Request, RequestContext>((request) =>
   createRequestContext(request)
@@ -300,8 +304,10 @@ ctx.user;
 Adapts a builder to a different input type:
 
 ```typescript
-const fromSocket = builder.withInput<{ socket: WebSocket }>(({ socket }) =>
-  socket.data.request
+// Bun's `ServerWebSocket`, not the DOM `WebSocket` — the per-connection
+// payload lives on `.data`, which the DOM type does not have.
+const fromSocket = builder.withInput<{ socket: { data: { request: Request } } }>(
+  ({ socket }) => socket.data.request
 );
 
 const context = await fromSocket.build({ socket });
