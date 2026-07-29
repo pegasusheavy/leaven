@@ -1,6 +1,6 @@
 {
   "name": "@leaven-graphql/playground",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GraphQL Playground integration for Leaven",
   "type": "module",
   "main": "./src/index.ts",
