@@ -309,6 +309,25 @@ describe('LeavenGraphQLDriver (end-to-end over HTTP)', () => {
     expect(result.body.errors?.length).toBeGreaterThan(0);
   });
 
+  it("maps a guard's HttpException to the matching ErrorCode in extensions", async () => {
+    const result = await post('{ blocked }');
+
+    // The executor's `formatExecutionError` hook is the only place the NestJS
+    // exception is still reachable as `originalError`; without it the error
+    // reaches the client codeless and is treated as a 500.
+    expect(result.body.errors?.[0]?.extensions?.code).toBe('FORBIDDEN');
+    expect(result.body.errors?.[0]?.extensions?.statusCode).toBe(403);
+  });
+
+  it('leaves a plain resolver error as INTERNAL_ERROR', async () => {
+    const result = await post('{ boxBoom }');
+
+    // `boxBoom` is nullable, so this is a partial success: 200 with errors.
+    expect(result.status).toBe(200);
+    expect(result.body.errors?.[0]?.message).toBe('resolver exploded');
+    expect(result.body.errors?.[0]?.extensions?.code).toBe('INTERNAL_ERROR');
+  });
+
   it('serves GraphiQL over GET when playground is enabled', async () => {
     const response = await fetch(url, { method: 'GET' });
     const html = await response.text();

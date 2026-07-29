@@ -8,12 +8,7 @@
 import { HttpException } from '@nestjs/common';
 import { AbstractGraphQLDriver } from '@nestjs/graphql';
 import type { GqlModuleOptions } from '@nestjs/graphql';
-import {
-  isObjectType,
-  type GraphQLFieldResolver,
-  type GraphQLFormattedError,
-  type GraphQLSchema,
-} from 'graphql';
+import type { GraphQLError, GraphQLFormattedError } from 'graphql';
 import { LeavenExecutor, type ExecutorConfig } from '@leaven-graphql/core';
 import {
   ERROR_CODES,
@@ -21,7 +16,6 @@ import {
   formatError,
   getErrorCode,
   isLeavenError,
-  LeavenError,
 } from '@leaven-graphql/errors';
 import { renderGraphiQL } from '@leaven-graphql/playground';
 
@@ -150,29 +144,6 @@ export class LeavenGraphQLDriver extends AbstractGraphQLDriver<LeavenDriverConfi
   private options: LeavenDriverConfig | null = null;
 
   /**
-   * Build the schema, then translate NestJS `HttpException`s raised inside it
-   * into Leaven errors.
-   *
-   * The translation has to happen here rather than on the response, because
-   * `LeavenExecutor` serialises errors with `GraphQLError.toJSON()` — which
-   * drops `originalError` — before the driver ever sees them.
-   */
-  public override async generateSchema(
-    options: LeavenDriverConfig
-  ): Promise<GraphQLSchema> {
-    const schema = await super.generateSchema(options);
-
-    if (!schema) {
-      throw new Error(
-        'LeavenGraphQLDriver: @nestjs/graphql produced no schema. Provide "autoSchemaFile", "typeDefs", "typePaths" or "schema".'
-      );
-    }
-
-    LeavenGraphQLDriver.translateHttpExceptions(schema);
-    return schema;
-  }
-
-  /**
    * Serve the schema `@nestjs/graphql` has already built.
    *
    * Registers a POST handler for GraphQL operations and, when `playground` is
@@ -194,6 +165,7 @@ export class LeavenGraphQLDriver extends AbstractGraphQLDriver<LeavenDriverConfi
       maxComplexity: options.maxComplexity,
       maxDepth: options.maxDepth,
       introspection: options.introspection ?? process.env.NODE_ENV !== 'production',
+      formatExecutionError: LeavenGraphQLDriver.formatExecutionError,
     });
 
     const path = this.getNormalizedPath(options);
@@ -393,6 +365,11 @@ export class LeavenGraphQLDriver extends AbstractGraphQLDriver<LeavenDriverConfi
    * Guarantee an `ErrorCode`, apply production masking, then hand the result
    * to a configured `formatError`.
    *
+   * By this point {@link formatExecutionError} has already given every NestJS
+   * `HttpException` its `ErrorCode`; what is left here is the residue — a
+   * resolver that threw a plain `Error` — which must still be coded and, in
+   * production, masked.
+   *
    * The executor reports errors as already-serialised `GraphQLFormattedError`s
    * (`GraphQLError.toJSON()`), so `formatError` from `@leaven-graphql/errors`
    * — whose input is an `Error`/`GraphQLError` — cannot be reused verbatim
@@ -478,72 +455,38 @@ export class LeavenGraphQLDriver extends AbstractGraphQLDriver<LeavenDriverConfi
   }
 
   /**
-   * Wrap every explicit field resolver in the schema so a NestJS
-   * `HttpException` becomes the equivalent Leaven error.
+   * Serialize one execution error, translating a NestJS `HttpException` into
+   * the equivalent {@link ErrorCode}.
    *
-   * Only fields that carry their own `resolve` function are touched — exactly
-   * the ones `@nestjs/graphql` wired to a NestJS handler — so the default
-   * field resolver, and therefore the overwhelming majority of field
-   * resolutions, is left untouched.
+   * Installed as the executor's `formatExecutionError` hook, which runs while
+   * the graphql-js `GraphQLError` is still intact — the only point at which
+   * `originalError` is still reachable. After `toJSON()` it is gone, and an
+   * `HttpException` (unlike a `LeavenError`) has no `extensions` of its own
+   * for graphql-js to adopt, so the error would otherwise reach the client as
+   * a bare `INTERNAL_ERROR` with a 500: a guard's `ForbiddenException` would be
+   * indistinguishable from a crash.
    *
-   * The generic `LeavenError` is used rather than `AuthenticationError` and
-   * friends because it is the only constructor that retains the original
-   * exception as `originalError`, which loggers and `formatError` hooks need.
+   * `message`, `path` and `locations` are preserved exactly as serialized;
+   * only `extensions.code` is supplied.
    */
-  private static translateHttpExceptions(schema: GraphQLSchema): void {
-    for (const type of Object.values(schema.getTypeMap())) {
-      if (!isObjectType(type) || type.name.startsWith('__')) {
-        continue;
-      }
+  private static formatExecutionError(error: GraphQLError): GraphQLFormattedError {
+    const formatted = error.toJSON();
+    const original = error.originalError;
 
-      for (const field of Object.values(type.getFields())) {
-        const original = field.resolve;
-        if (!original) {
-          continue;
-        }
-
-        const wrapped: GraphQLFieldResolver<unknown, unknown> = (
-          source,
-          args,
-          context,
-          info
-        ) => {
-          try {
-            const result = original(source, args, context, info);
-            return result instanceof Promise
-              ? result.catch((error: unknown) => {
-                  throw LeavenGraphQLDriver.toLeavenError(error);
-                })
-              : result;
-          } catch (error) {
-            throw LeavenGraphQLDriver.toLeavenError(error);
-          }
-        };
-
-        field.resolve = wrapped;
-      }
-    }
-  }
-
-  /**
-   * Convert a NestJS `HttpException` into the Leaven error carrying the
-   * matching `ErrorCode`. Anything else is returned untouched.
-   */
-  private static toLeavenError(error: unknown): unknown {
-    if (!(error instanceof HttpException)) {
-      return error;
+    if (!(original instanceof HttpException)) {
+      return formatted;
     }
 
-    const status = error.getStatus();
+    const status = original.getStatus();
     const code =
       HTTP_STATUS_TO_ERROR_CODE[status] ??
       (status >= 400 && status < 500
         ? ErrorCode.BAD_REQUEST
         : ErrorCode.INTERNAL_ERROR);
 
-    return new LeavenError(error.message, code, {
-      statusCode: status,
-      originalError: error,
-    });
+    return {
+      ...formatted,
+      extensions: { ...formatted.extensions, code, statusCode: status },
+    };
   }
 }
