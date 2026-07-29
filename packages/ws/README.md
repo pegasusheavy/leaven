@@ -15,7 +15,7 @@ init and acknowledgement, keep-alive pings, subscription lifecycle, and the
 protocol close codes. Hand it to `Bun.serve` via `getWebSocketConfig()`.
 
 ```typescript
-import { createWebSocketHandler } from '@leaven-graphql/ws';
+import { createWebSocketHandler, type WebSocketContext } from '@leaven-graphql/ws';
 
 const handler = createWebSocketHandler({
   schema,
@@ -26,7 +26,9 @@ const handler = createWebSocketHandler({
 Bun.serve({
   port: 4000,
   fetch(request, server) {
-    if (server.upgrade(request)) {
+    // Bun's types require the `data` option, but the handler's `open` replaces
+    // socket.data with a fresh WebSocketContext, so nothing needs stashing.
+    if (server.upgrade(request, { data: undefined as unknown as WebSocketContext })) {
       return;
     }
     return new Response('Not Found', { status: 404 });
@@ -446,6 +448,13 @@ interface ParseMessageOptions {
 ```
 
 ```typescript
+import {
+  createCompleteMessage,
+  createNextMessage,
+  formatMessage,
+  parseMessage,
+} from '@leaven-graphql/ws';
+
 socket.send(formatMessage(createNextMessage('1', { hello: 'world' })));
 socket.send(formatMessage(createCompleteMessage('1')));
 

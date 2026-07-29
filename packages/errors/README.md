@@ -61,6 +61,7 @@ import {
 
 The error code is the **second positional argument**, not an option:
 
+<!-- doc-check: skip - constructor signature listing, not a compilable statement -->
 ```typescript
 new LeavenError(message: string, code?: ErrorCode, options?: {
   statusCode?: number;
@@ -283,7 +284,7 @@ const formatted = formatError(
 //   extensions: { resourceType: 'User', resourceId: '123', code: 'NOT_FOUND' }
 // }
 
-const formatted = formatError(new Error('DB password is hunter2 at 10.0.0.5'), {
+const masked = formatError(new Error('DB password is hunter2 at 10.0.0.5'), {
   maskErrors: true,
 });
 // { message: 'An unexpected error occurred', extensions: { code: 'INTERNAL_ERROR' } }
@@ -307,6 +308,13 @@ An unmasked result carries `message`, plus `locations`, `path` and
 4. `maskErrors` is `true`.
 
 ```typescript
+import { GraphQLError } from 'graphql';
+import {
+  AuthenticationError,
+  errorToGraphQL,
+  maskError,
+} from '@leaven-graphql/errors';
+
 // Never masked - a known, deliberate code
 maskError(errorToGraphQL(new AuthenticationError('Please log in')), {
   maskErrors: true,
@@ -348,12 +356,20 @@ const gqlError = new LeavenError('Query failed', ErrorCode.INTERNAL_ERROR, {
 
 isLeavenError(gqlError);                 // false
 isLeavenError(gqlError.originalError);   // true - the LeavenError
-gqlError.originalError.originalError;    // dbError - the cause, one level deeper
+
+// `isLeavenError` narrows, which is also how you reach the cause one level
+// deeper without an assertion.
+if (isLeavenError(gqlError.originalError)) {
+  gqlError.originalError.originalError;  // dbError
+}
 ```
 
 So code matching on the underlying cause must unwrap one extra level:
 
 ```typescript
+// Whatever your data layer throws.
+class MyDbError extends Error {}
+
 // Wrong - never matches for a wrapped Leaven error
 if (gqlError.originalError instanceof MyDbError) { /* ... */ }
 

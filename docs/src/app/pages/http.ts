@@ -182,6 +182,7 @@ export class HttpComponent implements OnInit {
     ]);
   }
 
+  // doc-check: skip - shell command, not TypeScript
   installCode = `bun add @leaven-graphql/http @leaven-graphql/core graphql`;
 
   quickStartCode = `import { createServer } from '@leaven-graphql/http';

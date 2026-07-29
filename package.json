@@ -14,6 +14,7 @@
     "lint": "eslint packages/",
     "lint:fix": "eslint packages/ --fix",
     "typecheck": "pnpm -r typecheck",
+    "check:docs": "bun run scripts/check-doc-samples.ts",
     "commitlint": "commitlint --edit",
     "release": "changeset publish",
     "version-packages": "changeset version",

@@ -196,6 +196,7 @@ export class PluginsComponent implements OnInit {
     ]);
   }
 
+  // doc-check: skip - shell command, not TypeScript
   installCode = `bun add @leaven-graphql/plugins`;
 
   cachingCode = `import { createCachingPlugin } from '@leaven-graphql/plugins';
@@ -204,7 +205,7 @@ export class PluginsComponent implements OnInit {
 const cachingPlugin = createCachingPlugin({
   maxSize: 100,   // LRU entries (default: 100)
   ttl: 60_000,    // Entry lifetime in ms (default: 60000)
-  keyFn: (ctx) => \`\${ctx.context.userId}:\${ctx.request.query}\`,
+  keyFn: (ctx) => \`\${(ctx.context as AppContext).userId}:\${ctx.request.query}\`,
 });
 
 // Only for data that is identical for every caller (fully public content):
@@ -370,12 +371,12 @@ const manager = createPluginManager({
 const executor = new LeavenExecutor({ schema });
 
 // Run the plugin pipeline around execution
-const pluginContext = manager.createContext(request, contextValue);
+const pluginContext = manager.createContext(graphqlRequest, contextValue);
 
-const query = await manager.beforeParse(request.query, pluginContext);
+const query = await manager.beforeParse(graphqlRequest.query, pluginContext);
 
 // A beforeExecute hook may short-circuit (e.g. a cached response)
-const result = await executor.execute({ ...request, query }, contextValue);
+const result = await executor.execute({ ...graphqlRequest, query }, contextValue);
 
 const response = await manager.afterExecute(result.response, pluginContext);`;
 }

@@ -132,6 +132,7 @@ const graphiqlHtml = renderGraphiQL({ endpoint: '/graphql' });
 ### GraphiQL
 
 ```typescript
+import { createServer } from '@leaven-graphql/http';
 import { createGraphiQLHandler, renderGraphiQL } from '@leaven-graphql/playground';
 
 const server = createServer({
@@ -172,7 +173,7 @@ const server = createServer({
 });
 
 // Or use an environment variable
-const server = createServer({
+const explicitlyGatedServer = createServer({
   schema,
   playground: process.env.ENABLE_PLAYGROUND === 'true',
 });

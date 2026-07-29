@@ -33,20 +33,42 @@ By participating in this project, you agree to abide by our Code of Conduct. Ple
 
 ## Development Workflow
 
-### Branch Naming
+### Branching Model
 
-Use descriptive branch names:
-- `feat/add-caching-plugin` - New features
-- `fix/validation-error-message` - Bug fixes
-- `docs/update-readme` - Documentation
-- `refactor/executor-cleanup` - Refactoring
-- `test/add-cache-tests` - Test additions
+The repository follows [git-flow](https://nvie.com/posts/a-successful-git-branching-model/).
+`develop` is the default branch and where all work lands; `main` carries only
+released versions. The configured prefixes are:
+
+| Prefix | Cut from | Merges to | Use for |
+|--------|----------|-----------|---------|
+| `feature/` | `develop` | `develop` | New features |
+| `bugfix/` | `develop` | `develop` | Bug fixes, docs, refactors, test additions |
+| `release/` | `develop` | `main` (and back to `develop`) | Promoting a version to release |
+| `hotfix/` | `main` | `main` (and back to `develop`) | Urgent fixes to a released version |
+| `support/` | `main` | — | Long-lived maintenance of an older line |
+
+Keep the descriptive part of the name specific:
+
+- `feature/add-caching-plugin`
+- `bugfix/validation-error-message`
+- `bugfix/update-readme`
+
+Note that the branch prefix and the commit type are independent: a docs-only
+change goes on a `bugfix/` branch and still uses a `docs(scope):` commit
+message.
 
 ### Making Changes
 
-1. Create a new branch from `main`:
+1. Create a new branch from `develop`:
    ```bash
-   git checkout -b feat/your-feature
+   git checkout develop
+   git pull
+   git checkout -b feature/your-feature
+   ```
+
+   Or, with the `git flow` CLI:
+   ```bash
+   git flow feature start your-feature
    ```
 
 2. Make your changes following our [code style guidelines](#code-style)
@@ -177,18 +199,54 @@ describe('ClassName', () => {
    - Add changeset for user-facing changes
    - Update documentation if needed
 
-2. **PR Title:** Follow conventional commit format
+2. **Target branch:** Open the PR against `develop`. Only `release/*` and
+   `hotfix/*` branches target `main`.
 
-3. **PR Description:** Use the PR template and fill out all sections
+3. **PR Title:** Follow conventional commit format
 
-4. **Review Process:**
+4. **PR Description:** Use the PR template and fill out all sections
+
+5. **Review Process:**
    - PRs require at least one approval
    - Address all review comments
    - Keep PR scope focused
 
-5. **After Merge:**
+6. **After Merge:**
    - Delete your branch
    - The changeset will be included in the next release
+
+## Release Process
+
+Releases are split across the two long-lived branches, so each half of a
+changesets release runs on the branch it belongs to. See the header comment in
+[`.github/workflows/release.yml`](./workflows/release.yml) for the canonical
+description.
+
+1. **Changesets accumulate on `develop`** as feature and bugfix PRs merge. Every
+   user-facing change should carry one (`pnpm changeset`).
+
+2. **The Release workflow opens a version PR against `develop`.** On each push
+   to `develop` it runs `changeset version`, which applies the pending
+   changesets to package versions and CHANGELOGs, and opens (or updates) a
+   `chore: version packages` PR. This job never publishes.
+
+3. **Merge the version PR into `develop`.** `develop` now carries the versions
+   that are about to be released.
+
+4. **Cut a release branch and promote it to `main`:**
+   ```bash
+   git flow release start 0.2.0
+   # or: git checkout -b release/0.2.0 develop
+   ```
+   Merge `release/*` into `main` (and back into `develop`, which `git flow
+   release finish` does for you).
+
+5. **The push to `main` publishes.** The Release workflow's publish job runs
+   `changeset publish` for the versions `main` carries and tags the release.
+   This job never opens a version PR.
+
+Urgent fixes to a released version go on a `hotfix/` branch cut from `main`,
+merged to both `main` and `develop`.
 
 ## Package Development
 
