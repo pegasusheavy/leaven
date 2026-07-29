@@ -31,6 +31,10 @@ export { LeavenModule, LEAVEN_MODULE_OPTIONS, LEAVEN_DRIVER, LEAVEN_PUBSUB } fro
 // Driver exports
 export { LeavenDriver, type HandlerResult } from './driver';
 
+// `@nestjs/graphql` driver bridge — the path on which NestJS guards,
+// interceptors and parameter decorators execute.
+export { LeavenGraphQLDriver, type LeavenDriverConfig } from './graphql-driver';
+
 // Type exports
 export type {
   LeavenModuleOptions,
