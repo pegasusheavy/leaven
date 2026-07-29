@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/nestjs - Decorators
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -11,7 +11,7 @@ import {
   SetMetadata,
   applyDecorators,
 } from '@nestjs/common';
-import type { GqlContext } from './types';
+import { GQL_RESOLVER_ARGS, getGqlContext } from './execution-context';
 
 /**
  * Metadata key for resolver complexity
@@ -39,6 +39,21 @@ export const CACHE_KEY = 'leaven:cache';
 export const SUBSCRIPTION_FILTER_KEY = 'leaven:subscription:filter';
 
 /**
+ * Extractor backing the {@link Context} decorator.
+ *
+ * @internal Exported for testing only.
+ */
+export function contextExtractor(data: string | undefined, ctx: ExecutionContext): unknown {
+  const gqlContext = getGqlContext(ctx);
+
+  if (data) {
+    return gqlContext[data];
+  }
+
+  return gqlContext;
+}
+
+/**
  * Inject the GraphQL context
  *
  * @example
@@ -49,17 +64,16 @@ export const SUBSCRIPTION_FILTER_KEY = 'leaven:subscription:filter';
  * }
  * ```
  */
-export const Context = createParamDecorator(
-  (data: string | undefined, ctx: ExecutionContext): unknown => {
-    const gqlContext = getGqlContext(ctx);
+export const Context = createParamDecorator(contextExtractor);
 
-    if (data) {
-      return gqlContext[data];
-    }
-
-    return gqlContext;
-  }
-);
+/**
+ * Extractor backing the {@link Info} decorator.
+ *
+ * @internal Exported for testing only.
+ */
+export function infoExtractor(_data: unknown, ctx: ExecutionContext): unknown {
+  return ctx.getArgs()[GQL_RESOLVER_ARGS.INFO];
+}
 
 /**
  * Inject the GraphQL info object
@@ -72,12 +86,16 @@ export const Context = createParamDecorator(
  * }
  * ```
  */
-export const Info = createParamDecorator(
-  (_data: unknown, ctx: ExecutionContext): unknown => {
-    const args = ctx.getArgs();
-    return args[3]; // info is the 4th argument in GraphQL resolvers
-  }
-);
+export const Info = createParamDecorator(infoExtractor);
+
+/**
+ * Extractor backing the {@link Root} decorator.
+ *
+ * @internal Exported for testing only.
+ */
+export function rootExtractor(_data: unknown, ctx: ExecutionContext): unknown {
+  return ctx.getArgs()[GQL_RESOLVER_ARGS.ROOT];
+}
 
 /**
  * Inject the root/parent value
@@ -90,17 +108,29 @@ export const Info = createParamDecorator(
  * }
  * ```
  */
-export const Root = createParamDecorator(
-  (_data: unknown, ctx: ExecutionContext): unknown => {
-    const args = ctx.getArgs();
-    return args[0]; // root is the 1st argument in GraphQL resolvers
-  }
-);
+export const Root = createParamDecorator(rootExtractor);
 
 /**
  * Alias for Root decorator
  */
 export const Parent = Root;
+
+/**
+ * Extractor backing the {@link Args} decorator.
+ *
+ * @internal Exported for testing only.
+ */
+export function argsExtractor(data: string | undefined, ctx: ExecutionContext): unknown {
+  const gqlArgs = ctx.getArgs()[GQL_RESOLVER_ARGS.ARGS] as
+    | Record<string, unknown>
+    | undefined;
+
+  if (data) {
+    return gqlArgs?.[data];
+  }
+
+  return gqlArgs;
+}
 
 /**
  * Inject resolver arguments
@@ -113,18 +143,7 @@ export const Parent = Root;
  * }
  * ```
  */
-export const Args = createParamDecorator(
-  (data: string | undefined, ctx: ExecutionContext): unknown => {
-    const args = ctx.getArgs();
-    const gqlArgs = args[1]; // args is the 2nd argument in GraphQL resolvers
-
-    if (data) {
-      return gqlArgs?.[data];
-    }
-
-    return gqlArgs;
-  }
-);
+export const Args = createParamDecorator(argsExtractor);
 
 /**
  * Set complexity for a resolver
@@ -159,6 +178,13 @@ export interface ComplexityEstimatorArgs {
 /**
  * Mark a field as deprecated
  *
+ * @remarks
+ * Records the reason under {@link DEPRECATED_KEY}. `SchemaBuilderService`
+ * reads it off the resolver functions passed via the `resolvers` option and
+ * sets the matching field's `deprecationReason`, so the field is marked
+ * `@deprecated` in the emitted schema. A pre-built `schema` is used as
+ * given, so annotate its fields there instead.
+ *
  * @example
  * ```typescript
  * @Query(() => String)
@@ -175,6 +201,13 @@ export function Deprecated(reason: string): MethodDecorator {
 /**
  * Add description to a field
  *
+ * @remarks
+ * Records the text under {@link DESCRIPTION_KEY}. `SchemaBuilderService`
+ * reads it off the resolver functions passed via the `resolvers` option and
+ * sets the matching field's description, so the text appears in the emitted
+ * schema and in introspection. A pre-built `schema` is used as given, so
+ * describe its fields there instead.
+ *
  * @example
  * ```typescript
  * @Query(() => User)
@@ -190,6 +223,11 @@ export function Description(text: string): MethodDecorator {
 
 /**
  * Enable caching for a resolver
+ *
+ * @deprecated Has no effect; removal target 0.3.0. The hint is only applied by
+ * `CachingInterceptor`, which requires `info.cacheControl` — an Apollo Server
+ * construct that Leaven never attaches to `GraphQLResolveInfo`. The metadata is
+ * recorded under {@link CACHE_KEY} but nothing in the library reads it.
  *
  * @example
  * ```typescript
@@ -220,7 +258,91 @@ export interface CacheHintOptions {
 }
 
 /**
+ * Yield only the source events a predicate accepts.
+ *
+ * Cancelling the returned iterator cancels the source, because `for await`
+ * calls `return()` on the source when the loop completes abruptly — including
+ * when the consumer cancels this generator. No extra teardown is performed:
+ * a second `return()` would both replace any in-flight error with a cleanup
+ * error and, for shared engines, release a topic subscription twice.
+ *
+ * A predicate that throws drops the offending event and is reported to
+ * `console.error` rather than tearing down the whole subscription.
+ *
+ * @internal Shared by {@link SubscriptionFilter} and the `filter` option of
+ * the `Subscription` decorator.
+ */
+export async function* filterAsyncIterator<T>(
+  source: AsyncIterable<T>,
+  predicate: (payload: T) => boolean | Promise<boolean>
+): AsyncGenerator<T> {
+  for await (const payload of source) {
+    let accepted: boolean;
+    try {
+      accepted = await predicate(payload);
+    } catch (error) {
+      console.error('Subscription filter threw; dropping event:', error);
+      continue;
+    }
+
+    if (accepted) {
+      yield payload;
+    }
+  }
+}
+
+/**
+ * Replace a method descriptor with one that filters the async iterable the
+ * original method produces.
+ *
+ * The wrapper is deliberately synchronous: when the original method returns
+ * an async iterable directly, so does the wrapper, so a direct caller can
+ * still write `for await (const x of resolver.messageAdded())`. Only when the
+ * original returns a promise does the wrapper return one.
+ *
+ * @internal Shared by {@link SubscriptionFilter} and the `filter` option of
+ * the `Subscription` decorator, so a correctness fix lands in one place.
+ */
+export function wrapWithFilter(
+  descriptor: PropertyDescriptor,
+  filter: (payload: unknown, variables: unknown, context: unknown) => boolean | Promise<boolean>
+): void {
+  const original = descriptor.value as unknown;
+
+  if (typeof original !== 'function') {
+    return;
+  }
+
+  descriptor.value = function (this: unknown, ...args: unknown[]): unknown {
+    const source = (original as (...a: unknown[]) => unknown).apply(this, args);
+
+    const variables = args[GQL_RESOLVER_ARGS.ARGS];
+    const context = args[GQL_RESOLVER_ARGS.CONTEXT];
+    const predicate = (payload: unknown): boolean | Promise<boolean> =>
+      filter(payload, variables, context);
+
+    return source instanceof Promise
+      ? source.then((resolved) =>
+          filterAsyncIterator(resolved as AsyncIterable<unknown>, predicate)
+        )
+      : filterAsyncIterator(source as AsyncIterable<unknown>, predicate);
+  };
+}
+
+/**
  * Add filter to subscription
+ *
+ * Wraps the decorated method so the async iterator it returns yields only
+ * the events the predicate accepts. The predicate receives the published
+ * payload along with the resolver's arguments and context, and may be
+ * asynchronous. Rejected events are dropped without reaching the client.
+ *
+ * The wrapper preserves the original method's return kind: an async iterable
+ * stays an async iterable (so direct callers can `for await` it), and a
+ * promise stays a promise.
+ *
+ * The predicate is also recorded under {@link SUBSCRIPTION_FILTER_KEY} so a
+ * schema builder can inspect it.
  *
  * @example
  * ```typescript
@@ -234,7 +356,13 @@ export interface CacheHintOptions {
 export function SubscriptionFilter(
   filter: (payload: unknown, variables: unknown, context: unknown) => boolean | Promise<boolean>
 ): MethodDecorator {
-  return SetMetadata(SUBSCRIPTION_FILTER_KEY, filter);
+  return (target, propertyKey, descriptor) => {
+    wrapWithFilter(descriptor as PropertyDescriptor, filter);
+
+    // Applied last so the metadata lands on the wrapper that replaces the
+    // original method on the prototype.
+    return SetMetadata(SUBSCRIPTION_FILTER_KEY, filter)(target, propertyKey, descriptor);
+  };
 }
 
 /**
@@ -262,17 +390,11 @@ export function Decorators(...decorators: MethodDecorator[]): MethodDecorator {
 }
 
 /**
- * Get the GraphQL context from execution context
- */
-function getGqlContext(ctx: ExecutionContext): GqlContext {
-  const args = ctx.getArgs();
-  // In GraphQL resolvers: (root, args, context, info)
-  // Context is the 3rd argument
-  return args[2] as GqlContext;
-}
-
-/**
  * Create a custom context decorator
+ *
+ * The underlying param decorator is built once per created decorator, not on
+ * every application, so applying the returned decorator at many call sites
+ * reuses a single factory.
  *
  * @example
  * ```typescript
@@ -286,9 +408,10 @@ function getGqlContext(ctx: ExecutionContext): GqlContext {
  * ```
  */
 export function createContextDecorator<T>(key: string): () => ParameterDecorator {
-  return () =>
-    createParamDecorator((_data: unknown, ctx: ExecutionContext): T => {
-      const gqlContext = getGqlContext(ctx);
-      return gqlContext[key] as T;
-    })();
+  const decorator = createParamDecorator((_data: unknown, ctx: ExecutionContext): T => {
+    const gqlContext = getGqlContext(ctx);
+    return gqlContext[key] as T;
+  });
+
+  return () => decorator();
 }

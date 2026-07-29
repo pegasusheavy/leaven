@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/ws - PubSub tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -132,6 +132,42 @@ describe('PubSub', () => {
 
       expect(received).toContain('Message');
     });
+
+    test('should deliver exactly once to exact-topic subscribers when wildcards are enabled', () => {
+      const wildcardPubsub = new PubSub({ wildcards: true });
+      const received: string[] = [];
+
+      wildcardPubsub.subscribe('USER_CREATED', (msg: string) => received.push(msg));
+
+      wildcardPubsub.publish('USER_CREATED', 'User event');
+
+      expect(received).toEqual(['User event']);
+    });
+
+    test('should deliver exactly once each to exact and wildcard subscribers', () => {
+      const wildcardPubsub = new PubSub({ wildcards: true });
+      const exactReceived: string[] = [];
+      const wildcardReceived: string[] = [];
+
+      wildcardPubsub.subscribe('events.user', (msg: string) => exactReceived.push(msg));
+      wildcardPubsub.subscribe('events.*', (msg: string) => wildcardReceived.push(msg));
+
+      wildcardPubsub.publish('events.user', 'User event');
+
+      expect(exactReceived).toEqual(['User event']);
+      expect(wildcardReceived).toEqual(['User event']);
+    });
+
+    test('should not double-deliver when publishing directly to a wildcard pattern topic', () => {
+      const wildcardPubsub = new PubSub({ wildcards: true });
+      const received: string[] = [];
+
+      wildcardPubsub.subscribe('events.*', (msg: string) => received.push(msg));
+
+      wildcardPubsub.publish('events.*', 'Direct publish');
+
+      expect(received).toEqual(['Direct publish']);
+    });
   });
 
   describe('asyncIterator', () => {
@@ -178,6 +214,110 @@ describe('PubSub', () => {
       const iterator = pubsub.asyncIterator<string>('test');
 
       await expect(iterator.throw?.(new Error('Test'))).rejects.toThrow('Test');
+    });
+
+    test('should settle pending next() promises on throw', async () => {
+      const iterator = pubsub.asyncIterator<string>('test');
+
+      // Suspend a consumer on an empty queue
+      const pending = iterator.next();
+
+      await expect(iterator.throw?.(new Error('Test'))).rejects.toThrow('Test');
+
+      // The suspended pull must be settled, not silently discarded: otherwise
+      // a `for await` loop never terminates and its `finally` never runs
+      const settled = await Promise.race([
+        pending,
+        new Promise<'never-settled'>((resolve) =>
+          setTimeout(() => resolve('never-settled'), 100)
+        ),
+      ]);
+
+      expect(settled).not.toBe('never-settled');
+      expect((settled as IteratorResult<string>).done).toBe(true);
+      expect((settled as IteratorResult<string>).value).toBeUndefined();
+    });
+
+    test('should not evict a later subscription when return() is called twice', async () => {
+      // Reproduces the stale-unsubscribe bug: A's second return() must not
+      // delete the topic entry that now belongs to B
+      const iteratorA = pubsub.asyncIterator<string>('shared');
+      expect(pubsub.getSubscriberCount('shared')).toBe(1);
+
+      // First close: `for await` completing the source
+      await iteratorA.return?.();
+      expect(pubsub.getSubscriberCount('shared')).toBe(0);
+
+      // A new client claims the topic in the window before A's second close
+      const iteratorB = pubsub.asyncIterator<string>('shared');
+      expect(pubsub.getSubscriberCount('shared')).toBe(1);
+
+      // Second close: a caller's `finally` calling return() again. It must not
+      // take B's subscription down with it.
+      await iteratorA.return?.();
+      expect(pubsub.getSubscriberCount('shared')).toBe(1);
+
+      const pending = iteratorB.next();
+      pubsub.publish('shared', 'for B');
+
+      const result = await pending;
+      expect(result.done).toBe(false);
+      expect(result.value).toBe('for B');
+      expect(pubsub.getSubscriberCount('shared')).toBe(1);
+
+      await iteratorB.return?.();
+    });
+
+    test('should ignore a stale unsubscribe from a replaced topic Set', () => {
+      const receivedA: string[] = [];
+      const receivedB: string[] = [];
+
+      const unsubscribeA = pubsub.subscribe<string>('topic', (msg) =>
+        receivedA.push(msg)
+      );
+      unsubscribeA();
+      expect(pubsub.getSubscriberCount('topic')).toBe(0);
+
+      pubsub.subscribe<string>('topic', (msg) => receivedB.push(msg));
+
+      // Stale repeat of A's unsubscribe, now targeting a Set it no longer owns
+      unsubscribeA();
+
+      pubsub.publish('topic', 'Hello');
+
+      expect(receivedA).toEqual([]);
+      expect(receivedB).toEqual(['Hello']);
+      expect(pubsub.getSubscriberCount('topic')).toBe(1);
+    });
+
+    test('should drop oldest payloads when maxQueueSize is reached', async () => {
+      const boundedPubsub = new PubSub({ maxQueueSize: 2 });
+      const iterator = boundedPubsub.asyncIterator<string>('test');
+
+      // No consumer pulling yet: buffer fills, oldest is evicted
+      boundedPubsub.publish('test', 'first');
+      boundedPubsub.publish('test', 'second');
+      boundedPubsub.publish('test', 'third');
+
+      const result1 = await iterator.next();
+      const result2 = await iterator.next();
+
+      expect(result1.value).toBe('second');
+      expect(result2.value).toBe('third');
+
+      await iterator.return?.();
+    });
+
+    test('should discard buffered payloads on return', async () => {
+      const iterator = pubsub.asyncIterator<string>('test');
+
+      pubsub.publish('test', 'buffered');
+
+      await iterator.return?.();
+
+      const result = await iterator.next();
+      expect(result.done).toBe(true);
+      expect(result.value).toBeUndefined();
     });
   });
 

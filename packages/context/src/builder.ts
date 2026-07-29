@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/context - Context builder
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -59,7 +59,13 @@ export class ContextBuilder<TInput, TContext extends BaseContext> {
 
     for (const extension of this.extensions) {
       const ext = await extension(context);
-      context = { ...context, ...ext };
+      // Preserve the context's prototype so class-based contexts (e.g.
+      // RequestContext) keep their methods when extensions are applied.
+      context = Object.assign(
+        Object.create(Object.getPrototypeOf(context) as object) as TContext,
+        context,
+        ext
+      );
     }
 
     return context;

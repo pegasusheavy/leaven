@@ -41,7 +41,7 @@ import { SeoService } from '../services/seo.service';
             <li><strong class="text-white">GraphiQL</strong> - Official GraphQL IDE</li>
             <li><strong class="text-white">Schema Explorer</strong> - Browse types and fields</li>
             <li><strong class="text-white">Query History</strong> - Track previous queries</li>
-            <li><strong class="text-white">Customizable</strong> - Themes, tabs, settings</li>
+            <li><strong class="text-white">Customizable</strong> - Themes, default headers, editor settings</li>
           </ul>
         </div>
       </section>
@@ -55,14 +55,22 @@ import { SeoService } from '../services/seo.service';
       <!-- Quick Start -->
       <section class="mb-12">
         <h2 class="text-2xl font-semibold text-white mb-4">Quick Start</h2>
-        <p class="text-zinc-400 mb-4">Enable playground with &#64;leaven-graphql/http:</p>
+        <p class="text-zinc-400 mb-4">
+          Setting <code class="text-indigo-400">playground: true</code> on &#64;leaven-graphql/http serves
+          <strong class="text-white">GraphiQL</strong> at the GraphQL path. If you specifically want
+          GraphQL Playground, mount <code class="text-indigo-400">createPlaygroundHandler</code> on a route —
+          see <a routerLink="/playground" fragment="configuration" class="text-indigo-400 hover:underline">Configuration</a> below.
+        </p>
         <app-code-block [code]="quickStartCode" title="server.ts" />
       </section>
 
       <!-- Configuration -->
-      <section class="mb-12">
+      <section class="mb-12" id="configuration">
         <h2 class="text-2xl font-semibold text-white mb-4">Configuration</h2>
-        <p class="text-zinc-400 mb-4">Customize the playground appearance and behavior:</p>
+        <p class="text-zinc-400 mb-4">
+          <code class="text-indigo-400">HandlerConfig.playground</code> is a boolean, so appearance and behavior
+          are configured on the handler itself:
+        </p>
         <app-code-block [code]="configCode" title="playground-config.ts" />
       </section>
 
@@ -200,6 +208,20 @@ export class PlaygroundComponent implements OnInit {
       canonical: '/playground',
       ogType: 'article'
     });
+
+    // Emit the JSON-LD counterpart of this page's TechArticle microdata,
+    // plus the breadcrumb trail rendered at the top of the article.
+    this.seoService.updateStructuredData([
+      this.seoService.generateTechArticleSchema({
+        title: 'GraphQL Playground',
+        description: 'Built-in GraphQL Playground and GraphiQL integration with @leaven-graphql/playground. Explore and test your API.',
+        url: '/playground'
+      }),
+      this.seoService.generateBreadcrumbSchema([
+        { name: 'Home', url: '/' },
+        { name: 'GraphQL Playground', url: '/playground' }
+      ])
+    ]);
   }
 
   installCode = `bun add @leaven-graphql/playground`;
@@ -210,7 +232,7 @@ import { schema } from './schema';
 const server = createServer({
   schema,
   port: 4000,
-  // Enable GraphQL Playground
+  // Serve GraphiQL on GET requests to the GraphQL path
   playground: true,
 });
 
@@ -218,58 +240,54 @@ server.start();
 // Open http://localhost:4000/graphql in your browser`;
 
   configCode = `import { createServer } from '@leaven-graphql/http';
+import { createPlaygroundHandler } from '@leaven-graphql/playground';
 
+// The server's own \`playground\` flag is a boolean — it turns the built-in
+// GraphiQL page on or off and takes no further options.
 const server = createServer({
   schema,
-  playground: {
-    // Endpoint configuration
-    endpoint: '/graphql',
-    subscriptionEndpoint: 'ws://localhost:4000/graphql',
+  path: '/graphql',
+  playground: true,
+});
 
-    // Default headers
-    headers: {
-      'X-Custom-Header': 'value',
-    },
+// For a fully configured GraphQL Playground, build a handler and mount it
+// on a route. Every key below is part of PlaygroundConfig.
+const playgroundHandler = createPlaygroundHandler({
+  // Endpoint configuration
+  endpoint: '/graphql',
+  subscriptionEndpoint: 'ws://localhost:4000/graphql',
 
-    // Editor settings
-    settings: {
-      'editor.theme': 'dark',
-      'editor.fontSize': 14,
-      'editor.fontFamily': '"Fira Code", monospace',
-      'editor.cursorShape': 'line',
+  // Page chrome
+  title: 'My API Playground',
+  theme: 'dark',
 
-      // Request settings
-      'request.credentials': 'include',
-
-      // UI settings
-      'schema.polling.enable': true,
-      'schema.polling.interval': 2000,
-
-      // Tracing
-      'tracing.hideTracingResponse': false,
-    },
-
-    // Pre-populated tabs
-    tabs: [
-      {
-        name: 'Hello Query',
-        query: \`query HelloWorld {
+  // Pre-populated editor contents
+  defaultQuery: \`query HelloWorld {
   hello
 }\`,
-        variables: '{}',
-      },
-      {
-        name: 'User Query',
-        query: \`query GetUser($id: ID!) {
-  user(id: $id) {
-    id
-    name
-    email
-  }
-}\`,
-        variables: '{"id": "1"}',
-      },
-    ],
+  defaultVariables: '{}',
+
+  // Default headers
+  headers: {
+    'X-Custom-Header': 'value',
+  },
+
+  // Editor settings (the full supported set)
+  settings: {
+    'editor.theme': 'dark',
+    'editor.fontSize': 14,
+    'editor.fontFamily': '"Fira Code", monospace',
+    'request.credentials': 'include',
+    'tracing.hideTracingResponse': false,
+  },
+});
+
+const configuredServer = createServer({
+  schema,
+  path: '/graphql',
+  playground: false,
+  routes: {
+    '/playground': playgroundHandler,
   },
 });`;
 
@@ -318,7 +336,7 @@ const server = createServer({
     // Serve GraphiQL at /graphiql
     '/graphiql': createGraphiQLHandler({
       endpoint: '/graphql',
-      headerEditorEnabled: true,
+      explorer: true,
     }),
   },
 });

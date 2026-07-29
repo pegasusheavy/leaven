@@ -158,26 +158,46 @@ export class ContextComponent implements OnInit {
       canonical: '/context',
       ogType: 'article'
     });
+
+    // Emit the JSON-LD counterpart of this page's TechArticle microdata,
+    // plus the breadcrumb trail rendered at the top of the article.
+    this.seoService.updateStructuredData([
+      this.seoService.generateTechArticleSchema({
+        title: 'Request Context',
+        description: 'Manage request-scoped data with AsyncLocalStorage using @leaven-graphql/context. Access request info anywhere in your resolvers.',
+        url: '/context'
+      }),
+      this.seoService.generateBreadcrumbSchema([
+        { name: 'Home', url: '/' },
+        { name: 'Request Context', url: '/context' }
+      ])
+    ]);
   }
 
   installCode = `bun add @leaven-graphql/context`;
 
   basicCode = `import { createRequestContext } from '@leaven-graphql/context';
 
-// Create context from a Request
+// Create context from a Request. The third argument supplies the peer IP,
+// which \`Request\` does not carry (e.g. server.requestIP(request)?.address).
 const context = createRequestContext(request, {
-  includeHeaders: true,
-  includeIp: true,
-});
+  trustProxy: true,
+  proxyHeaders: ['x-forwarded-for', 'x-real-ip'],
+}, clientIp);
 
 // Access context properties
-console.log(context.requestId);   // Unique request ID
-console.log(context.url);         // Request URL
-console.log(context.method);      // HTTP method
-console.log(context.headers);     // Request headers
-console.log(context.ip);          // Client IP
-console.log(context.userAgent);   // User agent string
-console.log(context.startTime);   // Request start time`;
+console.log(context.requestId);           // Unique request ID
+console.log(context.startTime);           // Request start time (ms)
+console.log(context.request.url);         // Request URL
+console.log(context.request.method);      // HTTP method
+console.log(context.request.headers);     // Request headers
+console.log(context.request.userAgent);   // User agent string
+
+// Helper methods
+console.log(context.getClientIp());              // Client IP (honours trustProxy)
+console.log(context.getHeader('authorization')); // Case-insensitive lookup
+console.log(context.getElapsedTime());           // ms since startTime
+console.log(context.toJSON());                   // { requestId, startTime, method, url }`;
 
   storeCode = `import { ContextStore, createContextStore } from '@leaven-graphql/context';
 
@@ -200,27 +220,29 @@ async function someNestedFunction() {
   console.log(context.role); // 'admin'
 }`;
 
-  builderCode = `import { ContextBuilder, createContextBuilder } from '@leaven-graphql/context';
+  builderCode = `import { createContextBuilder, createRequestContext } from '@leaven-graphql/context';
 
-const builder = createContextBuilder()
-  .withRequest(request)
-  .withUser(authenticatedUser)
-  .withDatabase(dbConnection)
-  .withLogger(logger)
-  .withTracing(traceId);
+// createContextBuilder takes a factory that turns an input into a base context.
+// Each .extend() adds properties, and the result type is inferred as you chain.
+const builder = createContextBuilder((request: Request) =>
+  createRequestContext(request, { trustProxy: true })
+)
+  .extend(async (ctx) => ({ user: await authenticate(ctx.getHeader('authorization')) }))
+  .extend((ctx) => ({ db: getDatabase(), logger: logger.child({ requestId: ctx.requestId }) }));
 
-// Build the context
-const context = builder.build();
+// build() is async and takes the input the factory expects
+const context = await builder.build(request);
+
+// Optionally adapt the builder to a different input type
+const fromEvent = builder.withInput((event: FetchEvent) => event.request);
 
 // Use in resolvers
 const resolvers = {
   Query: {
-    me: (_, __, context) => {
-      return context.user;
-    },
-    posts: async (_, __, context) => {
-      context.logger.info('Fetching posts');
-      return context.db.posts.findAll();
+    me: (_, __, ctx: typeof context) => ctx.user,
+    posts: async (_, __, ctx: typeof context) => {
+      ctx.logger.info('Fetching posts');
+      return ctx.db.posts.findAll();
     },
   },
 };`;

@@ -56,6 +56,16 @@ import { SeoService } from '../services/seo.service';
         <h2 class="text-2xl font-semibold text-white mb-4">Built-in Plugins</h2>
         <p class="text-zinc-400 mb-4">Leaven provides several ready-to-use plugins:</p>
 
+        <h3 class="text-lg font-semibold text-white mt-6 mb-3">Caching Plugin</h3>
+        <p class="text-zinc-400 mb-4">
+          A cache hit skips execution entirely, so resolvers — and any field-level authorization they
+          perform — never run. <code class="text-purple-400">createCachingPlugin</code> therefore
+          <strong class="text-white">throws</strong> unless you make the cache-identity decision explicit:
+          pass a <code class="text-purple-400">keyFn</code> that folds the caller into the key, or set
+          <code class="text-purple-400">allowSharedCache: true</code> to serve one response to everyone.
+        </p>
+        <app-code-block [code]="cachingCode" title="caching.ts" />
+
         <h3 class="text-lg font-semibold text-white mt-6 mb-3">Logging Plugin</h3>
         <app-code-block [code]="loggingCode" title="logging.ts" />
 
@@ -170,38 +180,67 @@ export class PluginsComponent implements OnInit {
       canonical: '/plugins',
       ogType: 'article'
     });
+
+    // Emit the JSON-LD counterpart of this page's TechArticle microdata,
+    // plus the breadcrumb trail rendered at the top of the article.
+    this.seoService.updateStructuredData([
+      this.seoService.generateTechArticleSchema({
+        title: 'Plugin System',
+        description: 'Extend Leaven with plugins for caching, logging, tracing, depth limiting, and complexity analysis.',
+        url: '/plugins'
+      }),
+      this.seoService.generateBreadcrumbSchema([
+        { name: 'Home', url: '/' },
+        { name: 'Plugin System', url: '/plugins' }
+      ])
+    ]);
   }
 
   installCode = `bun add @leaven-graphql/plugins`;
 
+  cachingCode = `import { createCachingPlugin } from '@leaven-graphql/plugins';
+
+// Recommended: key on the caller so one user never sees another's response.
+const cachingPlugin = createCachingPlugin({
+  maxSize: 100,   // LRU entries (default: 100)
+  ttl: 60_000,    // Entry lifetime in ms (default: 60000)
+  keyFn: (ctx) => \`\${ctx.context.userId}:\${ctx.request.query}\`,
+});
+
+// Only for data that is identical for every caller (fully public content):
+const publicCachingPlugin = createCachingPlugin({ allowSharedCache: true });
+
+// Omitting both throws — the plugin refuses to guess:
+// createCachingPlugin();
+// TypeError: createCachingPlugin requires an explicit cache-identity decision...
+
+// Successful responses only; responses carrying errors are never cached.`;
+
   loggingCode = `import { createLoggingPlugin } from '@leaven-graphql/plugins';
 
 const loggingPlugin = createLoggingPlugin({
-  logger: console,
-  logLevel: 'info',
-  includeVariables: false, // Don't log sensitive data
-  includeResult: false,
+  logger: console,  // Custom logger (defaults to console)
+  level: 'info',    // 'debug' | 'info' | 'warn' | 'error'
 });
 
 // Output:
-// [GraphQL] Query getUser started
-// [GraphQL] Query getUser completed in 15ms`;
+// GraphQL operation completed { operationName: 'getUser', duration: '15.00ms' }`;
 
   tracingCode = `import { createTracingPlugin } from '@leaven-graphql/plugins';
 
-const tracingPlugin = createTracingPlugin({
-  includeResolvers: true,
-  includeValidation: true,
-});
+const tracingPlugin = createTracingPlugin();
 
-// Adds tracing info to response extensions:
+// Adds Apollo Tracing-shaped info to response extensions:
 // {
 //   data: { ... },
 //   extensions: {
 //     tracing: {
 //       version: 1,
 //       startTime: "2026-01-01T12:00:00.000Z",
+//       endTime: "2026-01-01T12:00:00.015Z",
 //       duration: 15000000,
+//       parsing: { ... },
+//       validation: { ... },
 //       execution: { ... }
 //     }
 //   }
@@ -209,10 +248,7 @@ const tracingPlugin = createTracingPlugin({
 
   depthCode = `import { createDepthLimitPlugin } from '@leaven-graphql/plugins';
 
-const depthLimitPlugin = createDepthLimitPlugin({
-  maxDepth: 10,
-  ignoreIntrospection: true,
-});
+const depthLimitPlugin = createDepthLimitPlugin(10);
 
 // Rejects queries that are too deeply nested:
 // query {
@@ -231,17 +267,24 @@ const depthLimitPlugin = createDepthLimitPlugin({
 
 const complexityPlugin = createComplexityPlugin({
   maxComplexity: 1000,
-  defaultFieldComplexity: 1,
-  scalarCost: 0,
-  objectCost: 1,
-  listFactor: 10,
+  defaultComplexity: 1,     // Cost per field (list args like "first" multiply it)
+  unknownMultiplier: 100,   // Page size assumed when first/last/limit is an
+                            // unresolvable variable (default: 100). Deliberately
+                            // pessimistic — the value is client-controlled, so
+                            // assuming a small page would let an unbounded
+                            // request score as a cheap one.
 });
 
-// Calculates and enforces query complexity
+// Calculates and enforces query complexity, throwing ComplexityError
+// (HTTP 400, extensions.code: 'COMPLEXITY_LIMIT') when the budget is exceeded.
 // Prevents expensive queries from overwhelming your server`;
 
-  managerCode = `import { PluginManager, createPluginManager } from '@leaven-graphql/plugins';
-import { createLoggingPlugin, createTracingPlugin } from '@leaven-graphql/plugins';
+  managerCode = `import {
+  createPluginManager,
+  createLoggingPlugin,
+  createTracingPlugin,
+  createDepthLimitPlugin,
+} from '@leaven-graphql/plugins';
 
 // Create plugin manager with schema
 const manager = createPluginManager({
@@ -249,65 +292,90 @@ const manager = createPluginManager({
   plugins: [
     createLoggingPlugin({ logger: console }),
     createTracingPlugin(),
-    createDepthLimitPlugin({ maxDepth: 10 }),
+    createDepthLimitPlugin(10),
   ],
 });
 
 // Register additional plugins
-manager.register(myCustomPlugin);
+await manager.register(myCustomPlugin);
 
 // Unregister plugins
-manager.unregister('logging');
+await manager.unregister('logging');
 
 // Get registered plugin names
 const plugins = manager.getPluginNames();
-// ['logging', 'tracing', 'depthLimit']`;
+// ['tracing', 'depth-limit', 'my-custom-plugin']`;
 
   customCode = `import { createPlugin } from '@leaven-graphql/plugins';
 
-const metricsPlugin = createPlugin({
-  name: 'metrics',
-  version: '1.0.0',
+// createPlugin(metadata, hooks) - metadata and hooks are separate arguments
+const metricsPlugin = createPlugin(
+  { name: 'metrics', version: '1.0.0' },
+  {
+    beforeExecute: async (document, context) => {
+      // Share data between hooks via context.state
+      context.state.set('startTime', performance.now());
+    },
 
-  beforeParse: (query, context) => {
-    context.startTime = performance.now();
-    return query; // Can transform the query
-  },
+    afterExecute: async (response, context) => {
+      const startTime = context.state.get('startTime') as number;
+      const duration = performance.now() - startTime;
 
-  afterExecute: (result, context) => {
-    const duration = performance.now() - context.startTime;
+      // Record metrics
+      metrics.record({
+        operation: context.request.operationName,
+        duration,
+        errors: response.errors?.length ?? 0,
+      });
 
-    // Record metrics
-    metrics.record({
-      operation: context.operationName,
-      duration,
-      errors: result.errors?.length ?? 0,
-    });
+      return response;
+    },
 
-    return result;
-  },
+    onError: async (error, context) => {
+      metrics.recordError({
+        operation: context.request.operationName,
+        error: error.message,
+      });
+      return error;
+    },
+  }
+);`;
 
-  onError: (error, context) => {
-    metrics.recordError({
-      operation: context.operationName,
-      error: error.message,
-    });
-  },
-});`;
+  composeCode = `import {
+  composePlugins,
+  createPluginManager,
+  createLoggingPlugin,
+  createTracingPlugin,
+  createDepthLimitPlugin,
+  createComplexityPlugin,
+} from '@leaven-graphql/plugins';
+import { LeavenExecutor } from '@leaven-graphql/core';
 
-  composeCode = `import { composePlugins } from '@leaven-graphql/plugins';
-
-// Combine multiple plugins into one
-const combinedPlugin = composePlugins([
+// Combine multiple plugins into one: composePlugins(name, ...plugins)
+const combinedPlugin = composePlugins(
+  'observability',
   createLoggingPlugin({ logger: console }),
   createTracingPlugin(),
-  createDepthLimitPlugin({ maxDepth: 10 }),
-  createComplexityPlugin({ maxComplexity: 500 }),
-]);
+  createDepthLimitPlugin(10),
+  createComplexityPlugin({ maxComplexity: 500 })
+);
 
-// Use with executor
-const executor = new LeavenExecutor({
+// Plugins attach to execution through a PluginManager
+// (ExecutorConfig has no 'plugins' option)
+const manager = createPluginManager({
   schema,
   plugins: [combinedPlugin],
-});`;
+});
+
+const executor = new LeavenExecutor({ schema });
+
+// Run the plugin pipeline around execution
+const pluginContext = manager.createContext(request, contextValue);
+
+const query = await manager.beforeParse(request.query, pluginContext);
+
+// A beforeExecute hook may short-circuit (e.g. a cached response)
+const result = await executor.execute({ ...request, query }, contextValue);
+
+const response = await manager.afterExecute(result.response, pluginContext);`;
 }

@@ -108,7 +108,7 @@ interface FAQ {
               <fa-icon [icon]="faArrowRight" class="text-sm"></fa-icon>
             </a>
             <a
-              href="https://github.com/pegasusheavy/leaven-graphql"
+              href="https://github.com/quinnjr/leaven"
               target="_blank"
               rel="noopener noreferrer"
               class="btn-secondary text-lg px-8 py-4 inline-flex items-center gap-3"
@@ -284,7 +284,7 @@ interface FAQ {
         <div class="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4 text-amber-500/50 text-sm">
           <div class="flex items-center gap-3">
             <fa-icon [icon]="faBreadSlice" class="text-xl text-amber-600/40"></fa-icon>
-            <span>Leaven © 2026 <span itemscope itemtype="https://schema.org/Organization"><span itemprop="name">Pegasus Heavy Industries LLC</span></span></span>
+            <span>Leaven © 2026 <span itemscope itemtype="https://schema.org/Person"><span itemprop="name">Joseph Quinn</span></span></span>
           </div>
           <div class="flex items-center gap-2 text-amber-600/40">
             <span>Baked with</span>
@@ -293,7 +293,7 @@ interface FAQ {
             <fa-icon [icon]="faMugHot" class="text-amber-400/60"></fa-icon>
           </div>
           <nav class="flex items-center gap-6" aria-label="Footer navigation">
-            <a href="https://github.com/pegasusheavy/leaven-graphql" class="hover:text-amber-400 transition-colors flex items-center gap-2" rel="noopener noreferrer">
+            <a href="https://github.com/quinnjr/leaven" class="hover:text-amber-400 transition-colors flex items-center gap-2" rel="noopener noreferrer">
               <fa-icon [icon]="faGithub"></fa-icon>
               GitHub
             </a>
@@ -354,7 +354,7 @@ import { schema } from './schema';
 const server = createServer({
   schema,
   port: 4000,
-  playground: true,  // The tasting counter
+  playground: true,  // The tasting counter (serves GraphiQL)
 });
 
 server.start();
@@ -389,7 +389,7 @@ server.start();
     {
       icon: faCakeCandles,
       title: 'Playground Patisserie',
-      description: 'Built-in GraphQL Playground for decorating and testing your API creations.',
+      description: 'Built-in GraphiQL for decorating and testing your API creations, with GraphQL Playground one handler away.',
     },
   ];
 

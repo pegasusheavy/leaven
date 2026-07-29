@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/context - Store tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -218,9 +218,10 @@ describe('ContextStore', () => {
   });
 
   describe('cleanup', () => {
-    test('should remove old contexts', () => {
-      // This is hard to test directly since contexts are cleaned up
-      // automatically. We'll just verify the method exists and returns.
+    test('should find nothing to clean under normal usage', () => {
+      // cleanup() is documented as a safety net only: run/runAsync always
+      // delete their entry on completion, so contexts created through the
+      // public API never linger and cleanup has nothing to do.
       const cleaned = store.cleanup(0);
       expect(cleaned).toBe(0);
     });

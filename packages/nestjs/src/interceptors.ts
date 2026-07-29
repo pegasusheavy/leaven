@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/nestjs - Interceptors
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -13,12 +13,17 @@ import {
 } from '@nestjs/common';
 import { Observable, tap, catchError, throwError } from 'rxjs';
 import { Reflector } from '@nestjs/core';
+import { GraphQLError } from 'graphql';
+import { errorToGraphQL, maskError } from '@leaven-graphql/errors';
 import { COMPLEXITY_KEY, CACHE_KEY, type CacheHintOptions } from './decorators';
+import { getGqlContext, getGqlInfo } from './execution-context';
 
 /**
  * Logging interceptor for GraphQL operations
  *
- * Logs timing and operation information for debugging.
+ * Logs timing and operation information for debugging. Successful
+ * resolutions are logged via `console.log`; failures are logged via
+ * `console.error` with the error attached, then rethrown unchanged.
  *
  * @example
  * ```typescript
@@ -40,6 +45,11 @@ export class LoggingInterceptor implements NestInterceptor {
       tap(() => {
         const duration = (performance.now() - start).toFixed(2);
         console.log(`[GraphQL] ${className}.${methodName} - ${duration}ms`);
+      }),
+      catchError((error) => {
+        const duration = (performance.now() - start).toFixed(2);
+        console.error(`[GraphQL] ${className}.${methodName} - ${duration}ms - failed:`, error);
+        return throwError(() => error);
       })
     );
   }
@@ -48,7 +58,12 @@ export class LoggingInterceptor implements NestInterceptor {
 /**
  * Error formatting interceptor
  *
- * Catches errors and formats them consistently.
+ * Catches errors and formats them consistently by delegating to
+ * `@leaven-graphql/errors`. Leaven errors keep their message and error
+ * code; unexpected errors are masked in production (message replaced,
+ * code set to `INTERNAL_ERROR`) and carry their stack trace in
+ * `extensions.stackTrace` in development. The caught error is never
+ * mutated — a new `GraphQLError` is thrown instead.
  *
  * @example
  * ```typescript
@@ -73,23 +88,52 @@ export class ErrorFormattingInterceptor implements NestInterceptor {
 
   /**
    * Format an error for GraphQL response
+   *
+   * Returns a new `GraphQLError` built from the formatted representation
+   * rather than mutating the input error.
+   *
+   * `GraphQLError` derives `locations` from the `nodes`, or the
+   * `source`/`positions`, handed to its constructor — never from a `locations`
+   * field — so those are carried over from the converted error. Without them a
+   * client would lose the source position that the driver's own formatting
+   * path (`formatError`) preserves. A masked error reports no locations, and
+   * must not leak them here either.
    */
-  private formatError(error: unknown): Error {
-    if (error instanceof Error) {
-      // Remove sensitive stack traces in production
-      if (process.env.NODE_ENV === 'production') {
-        delete (error as { stack?: string }).stack;
-      }
-      return error;
-    }
-    return new Error(String(error));
+  private formatError(error: unknown): GraphQLError {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const source = errorToGraphQL(error);
+    const formatted = maskError(source, {
+      maskErrors: isProduction,
+      includeStackTrace: !isProduction,
+    });
+    const keepLocations = formatted.locations !== undefined;
+
+    return new GraphQLError(formatted.message, {
+      nodes: keepLocations ? source.nodes : undefined,
+      source: keepLocations ? source.source : undefined,
+      positions: keepLocations ? source.positions : undefined,
+      path: formatted.path,
+      extensions: formatted.extensions,
+    });
   }
 }
 
 /**
  * Complexity tracking interceptor
  *
- * Tracks query complexity for monitoring.
+ * Tracks query complexity for monitoring. Field complexity declared via
+ * `@Complexity()` is accumulated onto the request context's
+ * `_resolvedFieldComplexity` key, so multiple fields resolved in one request
+ * sum rather than overwrite each other.
+ *
+ * This measurement is **observational only**. It deliberately does not touch
+ * `_queryComplexity`, the key the driver assigns per request and
+ * `ComplexityGuard` compares: NestJS runs guards before interceptors, so a
+ * value accumulated here can never influence the guard for its own request,
+ * and writing to that key would only corrupt the driver's static estimate —
+ * making later fields of a query answer for work they did not do. Read
+ * `_resolvedFieldComplexity` from logging, metrics, or a plugin after
+ * execution.
  *
  * @example
  * ```typescript
@@ -115,11 +159,15 @@ export class ComplexityInterceptor implements NestInterceptor {
     );
 
     if (complexity !== undefined) {
-      // Store complexity for later aggregation
-      const args = context.getArgs();
-      const gqlContext = args[2];
+      // Accumulate on the interceptor's own key — never the driver's
+      // `_queryComplexity`, which `ComplexityGuard` enforces.
+      const gqlContext = getGqlContext<Record<string, unknown> | undefined>(context);
       if (gqlContext) {
-        gqlContext._fieldComplexity = complexity;
+        const current =
+          typeof gqlContext._resolvedFieldComplexity === 'number'
+            ? gqlContext._resolvedFieldComplexity
+            : 0;
+        gqlContext._resolvedFieldComplexity = current + complexity;
       }
     }
 
@@ -130,7 +178,14 @@ export class ComplexityInterceptor implements NestInterceptor {
 /**
  * Caching interceptor
  *
- * Handles cache hints for responses.
+ * Forwards a `@CacheHint()` to `info.cacheControl.setCacheHint()`.
+ *
+ * @deprecated Has no effect; removal target 0.3.0. `info.cacheControl` is an
+ * Apollo Server construct, and nothing in Leaven's execution path attaches it,
+ * so in every supported configuration this interceptor does nothing and
+ * `@CacheHint` has no observable effect. Emit `Cache-Control` from the HTTP
+ * layer instead. Retained only so existing configurations keep compiling, and
+ * so a resolver executed under an Apollo-compatible `info` still gets its hint.
  *
  * @example
  * ```typescript
@@ -159,8 +214,9 @@ export class CachingInterceptor implements NestInterceptor {
       tap(() => {
         if (cacheHint) {
           // Store cache hints for response processing
-          const args = context.getArgs();
-          const gqlInfo = args[3];
+          const gqlInfo = getGqlInfo<
+            { cacheControl?: { setCacheHint(hint: CacheHintOptions): void } } | undefined
+          >(context);
           if (gqlInfo?.cacheControl) {
             gqlInfo.cacheControl.setCacheHint({
               maxAge: cacheHint.maxAge,
@@ -232,6 +288,8 @@ export class MetricsInterceptor implements NestInterceptor {
     metrics.errorCount++;
     metrics.totalDuration += duration;
     metrics.lastDuration = duration;
+    metrics.minDuration = Math.min(metrics.minDuration, duration);
+    metrics.maxDuration = Math.max(metrics.maxDuration, duration);
   }
 
   /**

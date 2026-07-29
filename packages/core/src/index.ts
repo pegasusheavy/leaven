@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/core - Core GraphQL execution engine for Leaven
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -15,11 +15,21 @@ export { isPromise, resolveValue } from './cache';
 export { RedisDocumentCache, createRedisCache } from './cache-redis';
 export type { RedisCacheConfig, RedisClient } from './cache-redis';
 
-export { parseDocument, validateDocument } from './parser';
+export {
+  parseDocument,
+  validateDocument,
+  calculateQueryDepth,
+  parseRequest,
+  countFields,
+  getOperationNames,
+  getOperationType,
+  createVisitBudget,
+  MAX_ANALYSIS_VISITS,
+} from './parser';
 export type { ParseOptions, ValidationResult } from './parser';
 
 export { compileQuery, CompiledQuery } from './compiler';
-export type { CompilerOptions, CompiledQueryResult } from './compiler';
+export type { CompilerOptions, CompiledField, CompiledFragment } from './compiler';
 
 export { OperationRegistry, createOperationRegistry } from './registry';
 export type { OperationRegistryConfig, RegisteredOperation } from './registry';

@@ -1,18 +1,26 @@
 /**
  * @leaven-graphql/context - Context store for async local storage
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
-import { AsyncLocalStorage } from 'async_hooks';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BaseContext } from './types';
 
 /**
  * Configuration for the context store
  */
 export interface ContextStoreConfig {
-  /** Enable automatic cleanup */
+  /**
+   * Enable a periodic safety-net cleanup timer.
+   *
+   * Contexts entered via {@link ContextStore.run} or
+   * {@link ContextStore.runAsync} are always removed automatically when the
+   * function completes (even on error), so under normal usage this timer has
+   * nothing to do. It exists purely as a safety net for contexts that end up
+   * registered without going through `run`/`runAsync`.
+   */
   autoCleanup?: boolean;
   /** Cleanup interval in milliseconds */
   cleanupInterval?: number;
@@ -45,6 +53,8 @@ export class ContextStore<TContext extends BaseContext> {
     if (config.autoCleanup) {
       const interval = config.cleanupInterval ?? 60000; // Default: 1 minute
       this.cleanupTimer = setInterval(() => this.cleanup(), interval);
+      // Don't keep the process alive just for the cleanup timer
+      this.cleanupTimer.unref?.();
     }
   }
 
@@ -122,7 +132,13 @@ export class ContextStore<TContext extends BaseContext> {
   }
 
   /**
-   * Cleanup old contexts (for contexts that weren't properly cleaned up)
+   * Remove stored contexts older than `maxAge` milliseconds.
+   *
+   * This is a safety net, not part of the normal lifecycle: `run` and
+   * `runAsync` always delete their entry when they complete (even on error),
+   * so contexts created through the public API cannot linger and this method
+   * will find nothing to clean. It only reclaims entries for contexts that
+   * were registered without going through `run`/`runAsync`.
    */
   public cleanup(maxAge: number = 300000): number {
     const now = Date.now();

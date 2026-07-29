@@ -1,11 +1,12 @@
 /**
  * @leaven-graphql/http - Response utilities
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import type { GraphQLResponse } from '@leaven-graphql/core';
+import { ERROR_CODES, getErrorCode } from '@leaven-graphql/errors';
 
 /**
  * CORS configuration
@@ -33,8 +34,6 @@ export interface ResponseOptions {
   status?: number;
   /** Additional headers */
   headers?: Record<string, string>;
-  /** CORS configuration */
-  cors?: CorsConfig;
   /** Pretty print JSON */
   pretty?: boolean;
 }
@@ -108,33 +107,21 @@ export function buildResponse(
   // Determine status code
   let status = options.status ?? 200;
 
-  if (hasErrors && status === 200) {
-    // Check for specific error types
+  // Only a total failure changes the status. When `data` is present the
+  // response is a spec-conformant partial success and MUST stay 200 — for
+  // coded errors too — or clients treat it as a network error and discard the
+  // data they were given.
+  const totalFailure = response.data === undefined || response.data === null;
+
+  if (hasErrors && status === 200 && totalFailure) {
+    // Map the first error's code to its documented HTTP status using the
+    // ERROR_CODES registry (the single source of truth). An uncoded error
+    // falls back to the documented 500 default.
     const firstError = response.errors![0];
     const code = firstError?.extensions?.code as string | undefined;
+    const knownCode = code ? getErrorCode(code) : null;
 
-    switch (code) {
-      case 'UNAUTHENTICATED':
-        status = 401;
-        break;
-      case 'FORBIDDEN':
-        status = 403;
-        break;
-      case 'BAD_REQUEST':
-      case 'VALIDATION_ERROR':
-      case 'PARSE_ERROR':
-        status = 400;
-        break;
-      case 'NOT_FOUND':
-        status = 404;
-        break;
-      case 'RATE_LIMITED':
-        status = 429;
-        break;
-      case 'INTERNAL_ERROR':
-        status = 500;
-        break;
-    }
+    status = knownCode ? ERROR_CODES[knownCode].status : 500;
   }
 
   // Build response body

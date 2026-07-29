@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/nestjs - Guards
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -15,6 +15,7 @@ import {
   Inject,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { getGqlContext as getSharedGqlContext } from './execution-context';
 import type { GqlContext } from './types';
 
 /**
@@ -31,6 +32,28 @@ export const ROLES_KEY = 'leaven:roles';
  * Metadata key for required permissions
  */
 export const PERMISSIONS_KEY = 'leaven:permissions';
+
+/**
+ * Injection token under which the module must provide the maximum allowed
+ * query complexity (see `LeavenModuleOptions.maxComplexity`) for
+ * `ComplexityGuard`.
+ *
+ * Overriding this provider with a finite limit while leaving
+ * `LeavenModuleOptions.maxComplexity` unset rejects every request: the driver
+ * measures complexity only when the *option* is set, and the guard fails
+ * closed on an unmeasured request. Set the option too.
+ */
+export const LEAVEN_MAX_COMPLEXITY = 'LEAVEN_MAX_COMPLEXITY';
+
+/**
+ * Injection token under which the module must provide the maximum allowed
+ * query depth (see `LeavenModuleOptions.maxDepth`) for `DepthGuard`.
+ *
+ * As with {@link LEAVEN_MAX_COMPLEXITY}, a finite override is only meaningful
+ * alongside `LeavenModuleOptions.maxDepth`, which is what makes the driver
+ * measure each request's depth.
+ */
+export const LEAVEN_MAX_DEPTH = 'LEAVEN_MAX_DEPTH';
 
 /**
  * Mark a resolver as public (no authentication required)
@@ -116,10 +139,12 @@ export class AuthGuard implements CanActivate {
 
   /**
    * Get GraphQL context from execution context
+   *
+   * Delegates to the shared `execution-context` helper, which owns the
+   * positional assumption (`GQL_RESOLVER_ARGS`) about resolver arguments.
    */
   protected getGqlContext(context: ExecutionContext): GqlContext {
-    const args = context.getArgs();
-    return args[2] as GqlContext;
+    return getSharedGqlContext(context);
   }
 
   /**
@@ -186,10 +211,12 @@ export class RolesGuard implements CanActivate {
 
   /**
    * Get GraphQL context from execution context
+   *
+   * Delegates to the shared `execution-context` helper, which owns the
+   * positional assumption (`GQL_RESOLVER_ARGS`) about resolver arguments.
    */
   protected getGqlContext(context: ExecutionContext): GqlContext {
-    const args = context.getArgs();
-    return args[2] as GqlContext;
+    return getSharedGqlContext(context);
   }
 
   /**
@@ -275,10 +302,12 @@ export class PermissionsGuard implements CanActivate {
 
   /**
    * Get GraphQL context from execution context
+   *
+   * Delegates to the shared `execution-context` helper, which owns the
+   * positional assumption (`GQL_RESOLVER_ARGS`) about resolver arguments.
    */
   protected getGqlContext(context: ExecutionContext): GqlContext {
-    const args = context.getArgs();
-    return args[2] as GqlContext;
+    return getSharedGqlContext(context);
   }
 
   /**
@@ -315,19 +344,42 @@ export class PermissionsGuard implements CanActivate {
 /**
  * Complexity limit guard
  *
- * Prevents queries that exceed complexity limits.
+ * Prevents queries that exceed complexity limits. `LeavenDriver` computes
+ * each request's complexity before execution and records it on the request
+ * context as `_queryComplexity`; this guard rejects the request when that
+ * value exceeds the limit provided via the `LEAVEN_MAX_COMPLEXITY`
+ * injection token.
+ *
+ * Whenever a finite limit is configured the guard fails **closed**: a request
+ * whose complexity is missing or non-numeric — analysis never ran, or it
+ * failed — is rejected rather than allowed through unmeasured.
+ *
+ * With no limit configured the module supplies the `Infinity` sentinel. There
+ * is then nothing to enforce, and the driver does not compute
+ * `_queryComplexity` at all, so the guard admits every request instead of
+ * rejecting them all for a measurement nobody asked for.
  */
 @Injectable()
 export class ComplexityGuard implements CanActivate {
   constructor(
-    @Inject('LEAVEN_MAX_COMPLEXITY') private readonly maxComplexity: number
+    @Inject(LEAVEN_MAX_COMPLEXITY) private readonly maxComplexity: number
   ) {}
 
   public canActivate(context: ExecutionContext): boolean {
-    const gqlContext = this.getGqlContext(context);
-    const currentComplexity = (gqlContext as Record<string, unknown>)._queryComplexity as number | undefined;
+    if (this.maxComplexity === Number.POSITIVE_INFINITY) {
+      return true;
+    }
 
-    if (currentComplexity !== undefined && currentComplexity > this.maxComplexity) {
+    const gqlContext = getSharedGqlContext(context) as Record<string, unknown> | undefined;
+    const currentComplexity = gqlContext?._queryComplexity;
+
+    if (typeof currentComplexity !== 'number' || Number.isNaN(currentComplexity)) {
+      throw new ForbiddenException(
+        'Query complexity could not be determined; rejecting the request'
+      );
+    }
+
+    if (currentComplexity > this.maxComplexity) {
       throw new ForbiddenException(
         `Query complexity ${currentComplexity} exceeds maximum allowed ${this.maxComplexity}`
       );
@@ -335,45 +387,51 @@ export class ComplexityGuard implements CanActivate {
 
     return true;
   }
-
-  /**
-   * Get GraphQL context from execution context
-   */
-  private getGqlContext(context: ExecutionContext): GqlContext {
-    const args = context.getArgs();
-    return args[2] as GqlContext;
-  }
 }
 
 /**
  * Depth limit guard
  *
- * Prevents queries that exceed depth limits.
+ * Prevents queries that exceed depth limits. `LeavenDriver` computes each
+ * request's depth before execution and records it on the request context as
+ * `_queryDepth`; this guard rejects the request when that value exceeds the
+ * limit provided via the `LEAVEN_MAX_DEPTH` injection token.
+ *
+ * Whenever a finite limit is configured the guard fails **closed**: a request
+ * whose depth is missing or non-numeric — analysis never ran, or it failed —
+ * is rejected rather than allowed through unmeasured.
+ *
+ * With no limit configured the module supplies the `Infinity` sentinel. There
+ * is then nothing to enforce, and the driver does not compute `_queryDepth` at
+ * all, so the guard admits every request instead of rejecting them all for a
+ * measurement nobody asked for.
  */
 @Injectable()
 export class DepthGuard implements CanActivate {
   constructor(
-    @Inject('LEAVEN_MAX_DEPTH') private readonly maxDepth: number
+    @Inject(LEAVEN_MAX_DEPTH) private readonly maxDepth: number
   ) {}
 
   public canActivate(context: ExecutionContext): boolean {
-    const gqlContext = this.getGqlContext(context);
-    const currentDepth = (gqlContext as Record<string, unknown>)._queryDepth as number | undefined;
+    if (this.maxDepth === Number.POSITIVE_INFINITY) {
+      return true;
+    }
 
-    if (currentDepth !== undefined && currentDepth > this.maxDepth) {
+    const gqlContext = getSharedGqlContext(context) as Record<string, unknown> | undefined;
+    const currentDepth = gqlContext?._queryDepth;
+
+    if (typeof currentDepth !== 'number' || Number.isNaN(currentDepth)) {
+      throw new ForbiddenException(
+        'Query depth could not be determined; rejecting the request'
+      );
+    }
+
+    if (currentDepth > this.maxDepth) {
       throw new ForbiddenException(
         `Query depth ${currentDepth} exceeds maximum allowed ${this.maxDepth}`
       );
     }
 
     return true;
-  }
-
-  /**
-   * Get GraphQL context from execution context
-   */
-  private getGqlContext(context: ExecutionContext): GqlContext {
-    const args = context.getArgs();
-    return args[2] as GqlContext;
   }
 }

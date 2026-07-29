@@ -1,11 +1,12 @@
 /**
  * @leaven-graphql/http - Bun HTTP server
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import type { Server } from 'bun';
+import type { WebSocketHandler, WebSocketContext } from '@leaven-graphql/ws';
 import { createHandler, type HandlerConfig, type GraphQLHandler } from './handler';
 
 /**
@@ -22,6 +23,12 @@ export interface ServerConfig<TContext = unknown> extends HandlerConfig<TContext
   fallback?: (request: Request) => Response | Promise<Response>;
   /** Routes map for multiple endpoints */
   routes?: Record<string, GraphQLHandler | ((request: Request) => Response | Promise<Response>)>;
+  /**
+   * WebSocket handler for GraphQL subscriptions. When set, requests to the
+   * GraphQL path carrying an `Upgrade: websocket` header are upgraded and
+   * handled via the graphql-transport-ws protocol.
+   */
+  websocket?: WebSocketHandler;
   /** Called when server starts */
   onStart?: (server: Server<unknown>) => void;
   /** Called when server stops */
@@ -50,37 +57,60 @@ export class LeavenServer {
   private readonly config: ServerConfig;
   private readonly handler: GraphQLHandler;
   private readonly path: string;
+  private readonly routeMap: Map<
+    string,
+    GraphQLHandler | ((request: Request) => Response | Promise<Response>)
+  >;
 
   constructor(config: ServerConfig) {
     this.config = config;
     this.path = config.path ?? '/graphql';
     this.handler = createHandler(config);
+    this.routeMap = new Map(Object.entries(config.routes ?? {}));
   }
 
   /**
    * Handle incoming requests
+   *
+   * Returns `undefined` only when the request was upgraded to a WebSocket
+   * connection (Bun requires `fetch` to return undefined in that case).
    */
-  private async handleRequest(request: Request): Promise<Response> {
+  private async handleRequest(request: Request): Promise<Response | undefined> {
     try {
       const url = new URL(request.url);
 
-      // Check routes
-      if (this.config.routes) {
-        for (const [routePath, routeHandler] of Object.entries(this.config.routes)) {
-          if (url.pathname === routePath) {
-            return routeHandler(request);
-          }
-        }
+      // Check routes (all handlers are awaited so async failures are
+      // routed through onError instead of escaping the try block)
+      const routeHandler = this.routeMap.get(url.pathname);
+      if (routeHandler) {
+        return await routeHandler(request);
       }
 
       // Handle GraphQL endpoint
       if (url.pathname === this.path) {
-        return this.handler(request);
+        // Upgrade WebSocket connections for subscriptions
+        if (
+          this.config.websocket &&
+          this.server &&
+          request.headers.get('upgrade')?.toLowerCase() === 'websocket'
+        ) {
+          const data: WebSocketContext = {
+            connectionId: '',
+            initialized: false,
+            subscriptions: new Set(),
+          };
+          if (this.server.upgrade(request, { data })) {
+            return undefined;
+          }
+          return new Response('WebSocket upgrade failed', { status: 400 });
+        }
+
+        return await this.handler(request);
       }
 
       // Fallback handler
       if (this.config.fallback) {
-        return this.config.fallback(request);
+        return await this.config.fallback(request);
       }
 
       // Default 404
@@ -96,18 +126,43 @@ export class LeavenServer {
   }
 
   /**
+   * Build the Bun.serve options.
+   *
+   * Shared by `start()` and `reload()` so a reload restates the full option
+   * set — `development`, and the current WebSocket handler — rather than a
+   * subset. Bun carries a previously installed WebSocket handler across a
+   * reload that omits one, so this matters when the configuration has
+   * *changed*: a swapped handler takes effect instead of the stale one
+   * continuing to serve.
+   */
+  private buildServeOptions(): {
+    port: number;
+    hostname: string;
+    development: boolean | undefined;
+    fetch: (request: Request) => Promise<Response | undefined>;
+    websocket?: ReturnType<WebSocketHandler['getWebSocketConfig']>;
+  } {
+    const websocket = this.config.websocket?.getWebSocketConfig();
+
+    return {
+      port: this.config.port ?? 4000,
+      hostname: this.config.hostname ?? '0.0.0.0',
+      development: this.config.development,
+      fetch: (request: Request) => this.handleRequest(request),
+      ...(websocket ? { websocket } : {}),
+    };
+  }
+
+  /**
    * Start the server
    */
   public start(): ServerInfo {
-    const port = this.config.port ?? 4000;
-    const hostname = this.config.hostname ?? '0.0.0.0';
+    const options = this.buildServeOptions();
+    const { port, hostname } = options;
 
-    this.server = Bun.serve({
-      port,
-      hostname,
-      development: this.config.development,
-      fetch: (request) => this.handleRequest(request),
-    });
+    this.server = Bun.serve(
+      options as unknown as Parameters<typeof Bun.serve>[0]
+    ) as unknown as Server<unknown>;
 
     const actualPort = this.server.port ?? port;
     const actualHostname = this.server.hostname ?? hostname;
@@ -153,15 +208,17 @@ export class LeavenServer {
    */
   public reload(): void {
     if (this.server) {
-      this.server.reload({
-        fetch: (request: Request) => this.handleRequest(request),
-      });
+      this.server.reload(
+        this.buildServeOptions() as unknown as Parameters<
+          Server<unknown>['reload']
+        >[0]
+      );
     }
   }
 }
 
 /**
- * Create and start a Leaven GraphQL server
+ * Create a Leaven GraphQL server (call `.start()` to begin listening)
  */
 export function createServer<TContext = unknown>(
   config: ServerConfig<TContext>

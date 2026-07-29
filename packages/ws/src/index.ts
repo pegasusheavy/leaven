@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/ws - WebSocket subscriptions for Leaven
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -18,6 +18,11 @@ export {
   MessageType,
   parseMessage,
   formatMessage,
+  createConnectionAck,
+  createNextMessage,
+  createErrorMessage,
+  createCompleteMessage,
+  createPongMessage,
   type ConnectionInitMessage,
   type ConnectionAckMessage,
   type SubscribeMessage,
@@ -26,4 +31,5 @@ export {
   type CompleteMessage,
   type PingMessage,
   type PongMessage,
+  type ParseMessageOptions,
 } from './protocol';

@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/core - Performance benchmarks
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -165,19 +165,24 @@ async function benchmark(
     await fn();
   }
 
-  const times: number[] = [];
+  let sumTime = 0;
+  let minTime = Infinity;
+  let maxTime = -Infinity;
   const start = performance.now();
 
   for (let i = 0; i < iterations; i++) {
     const iterStart = performance.now();
     await fn();
-    times.push(performance.now() - iterStart);
+    const elapsed = performance.now() - iterStart;
+    sumTime += elapsed;
+    if (elapsed < minTime) minTime = elapsed;
+    if (elapsed > maxTime) maxTime = elapsed;
   }
 
   const totalTime = performance.now() - start;
-  const avgTime = totalTime / iterations;
-  const minTime = Math.min(...times);
-  const maxTime = Math.max(...times);
+  // Average of the measured iteration times, excluding the timing
+  // bookkeeping itself, which would otherwise inflate sub-microsecond cases.
+  const avgTime = sumTime / iterations;
 
   return {
     name,
@@ -197,7 +202,7 @@ function formatResult(result: BenchmarkResult): string {
     `  Total time: ${result.totalTime.toFixed(2)}ms`,
     `  Avg time: ${result.avgTime.toFixed(4)}ms`,
     `  Min/Max: ${result.minTime.toFixed(4)}ms / ${result.maxTime.toFixed(4)}ms`,
-    `  Ops/sec: ${result.opsPerSecond.toFixed(0).toLocaleString()}`,
+    `  Ops/sec: ${Number(result.opsPerSecond.toFixed(0)).toLocaleString()}`,
   ].join('\n');
 }
 
@@ -318,7 +323,7 @@ async function runBenchmarks() {
   console.log('='.repeat(60));
   console.log();
 
-  const cacheStats = executorWithCache.getCacheStats();
+  const cacheStats = await executorWithCache.getCacheStats();
   console.log('Cache Stats:', cacheStats);
   console.log();
 
@@ -361,4 +366,9 @@ export {
 };
 
 // Run if executed directly
-runBenchmarks().catch(console.error);
+if (import.meta.main) {
+  runBenchmarks().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

@@ -57,14 +57,31 @@ const executor = new LeavenExecutor({
   },
 });
 
-// Check cache statistics
+// Check cache statistics (async — a Redis-backed cache answers over the wire)
 const stats = await executor.getCacheStats();
 console.log(stats);
 // {
-//   document: { size: 42, hits: 156, hitRate: 0.93 },
-//   compiled: { size: 38 }
+//   document: {
+//     size: 42,        // entries currently cached
+//     maxSize: 1000,
+//     hitRate: 3.71,   // AVERAGE HITS PER ENTRY, not a hit/miss ratio
+//     totalHits: 156,
+//     entries: 42      // alias for `size`
+//   },
+//   compiled: { size: 38, maxSize: 1000 }
 // }
 ```
+
+`stats.document` is `null` when the executor was created with `cache: false`.
+
+**`hitRate` is not a percentage.** It is `totalHits / size` — the average number
+of times each cached entry has been reused. Misses are not tracked at all, so
+the value is unbounded and routinely exceeds `1` on a warm cache.
+
+`size` (and its alias `entries`) is exact for the in-memory cache. The Redis
+cache maintains it as a counter updated on writes and deletes and cannot
+observe server-side TTL expirations, so there it is an upper bound that drifts
+upward.
 
 ### Redis Cache (Distributed)
 
@@ -84,6 +101,7 @@ const executor = new LeavenExecutor({
     ttl: 3600,              // TTL in seconds
     compress: true,         // Enable gzip compression
     compressionThreshold: 1024, // Compress documents > 1KB
+    trackHits: false,       // Skip the per-hit INCR on a hot deployment
   }),
 });
 ```
@@ -123,6 +141,16 @@ const executor = new LeavenExecutor({
 });
 ```
 
+`subscribe` runs the same hooks up to and including `onExecute`. It does not
+call `onExecuted`, because a subscription yields a stream rather than one
+response.
+
+`onError` fires when the operation itself fails — a parse error, a
+depth/token/complexity rejection, or anything thrown by an earlier hook. It
+does **not** fire for resolver-level errors: graphql-js collects those into
+`result.errors` and returns a normal (possibly partial) response. Inspect
+`result.errors` in `onExecuted` to observe them.
+
 ### Execution Metrics
 
 Track execution performance:
@@ -144,8 +172,8 @@ console.log(result.metrics);
 //     totalTime: 5.5
 //   },
 //   documentCached: true,
-//   queryCached: false,
-//   resolverCount: 5
+//   validationCached: true,
+//   queryCached: false
 // }
 ```
 
@@ -175,12 +203,17 @@ const result = await executor.execute<QueryData>(
 | `schema` | `GraphQLSchema` | Required | Your GraphQL schema |
 | `rootValue` | `unknown` | `undefined` | Root resolver value |
 | `cache` | `DocumentCacheConfig \| boolean \| IDocumentCache` | `true` | Document cache configuration or custom cache |
+| `parseOptions` | `ParseOptions` | `{}` | Parser options: `maxDepth`, `maxTokens`, and raw `graphqlOptions` |
 | `compilerOptions` | `CompilerOptions` | `undefined` | Query compiler options |
-| `maxDepth` | `number` | `undefined` | Maximum query depth |
-| `maxComplexity` | `number` | `undefined` | Maximum query complexity |
+| `maxDepth` | `number` | `undefined` | Maximum query depth (overrides `parseOptions.maxDepth`) |
+| `maxComplexity` | `number` | `undefined` | Maximum query complexity (implies `compilerOptions.calculateComplexity`) |
 | `hooks` | `ExecutionHooks` | `undefined` | Lifecycle hooks |
-| `metrics` | `boolean` | `false` | Enable execution metrics |
+| `metrics` | `boolean` | `false` | Enable execution metrics (reported by `execute` only) |
 | `introspection` | `boolean` | `true` | Enable introspection queries |
+
+`maxDepth`, `maxComplexity` and `hooks` apply to subscriptions as well as
+queries and mutations — `execute` and `subscribe` share one
+parse/validate/compile pipeline.
 
 ## API Reference
 
@@ -192,33 +225,45 @@ The main executor class.
 class LeavenExecutor {
   constructor(config: ExecutorConfig);
 
-  // Execute a GraphQL request
-  execute<TData = Record<string, unknown>>(
+  // Execute a query or mutation
+  execute<TData = Record<string, unknown>, TContext = unknown>(
     request: GraphQLRequest,
-    context?: unknown
+    context?: TContext
   ): Promise<ExecutionResult<TData>>;
 
-  // Parse a query string into a DocumentNode
-  parse(query: string): DocumentNode;
+  // Start a subscription. Resolves to an async iterator on success, or to a
+  // GraphQLResponse carrying `errors` on any failure — it never rejects.
+  subscribe<TData = Record<string, unknown>, TContext = unknown>(
+    request: GraphQLRequest,
+    context?: TContext
+  ): Promise<SubscriptionIterator<TData> | GraphQLResponse<TData>>;
 
-  // Validate a document against the schema
-  validate(document: DocumentNode): ValidationResult;
+  // Document and compiled-query cache statistics
+  getCacheStats(): Promise<{
+    document: CacheStats | null;
+    compiled: { size: number; maxSize: number };
+  }>;
 
-  // Get cache statistics
-  getCacheStats(): CacheStats;
+  // Clear both the document cache and the compiled-query cache
+  clearCaches(): Promise<void>;
 
-  // Clear the document cache
-  clearCache(): void;
+  // The schema this executor was built with
+  getSchema(): GraphQLSchema;
 }
 ```
+
+Parsing and validation are internal to `execute`/`subscribe`. To do them
+yourself, use the standalone `parseDocument(query, options)` and
+`validateDocument(schema, document, options)` exports.
 
 ### GraphQLRequest
 
 ```typescript
 interface GraphQLRequest {
   query: string;
-  variables?: Record<string, unknown>;
   operationName?: string;
+  variables?: Record<string, unknown>;
+  extensions?: Record<string, unknown>;
 }
 ```
 
@@ -226,15 +271,39 @@ interface GraphQLRequest {
 
 ```typescript
 interface ExecutionResult<TData = Record<string, unknown>> {
-  response: {
-    data?: TData;
-    errors?: GraphQLError[];
-    extensions?: Record<string, unknown>;
-  };
+  response: GraphQLResponse<TData>;
   metrics?: ExecutionMetrics;
+}
+
+interface GraphQLResponse<TData = Record<string, unknown>> {
+  data?: TData | null;
+  // Already formatted for the wire — spec-shaped plain objects, not
+  // GraphQLError instances
+  errors?: readonly GraphQLFormattedError[];
+  extensions?: Record<string, unknown>;
+}
+```
+
+Rejections carry a machine-readable `extensions.code` from
+`@leaven-graphql/errors` — `DEPTH_LIMIT`, `COMPLEXITY_LIMIT`, `RATE_LIMITED`,
+`INTERNAL_ERROR` and so on — which the HTTP layer maps to a status code.
+
+### CacheStats
+
+```typescript
+interface CacheStats {
+  // Exact in memory; an upward-drifting upper bound on Redis, which cannot
+  // observe TTL expirations
+  size: number;
+  maxSize: number;
+  // Average hits per entry (totalHits / size) — NOT a hit/miss ratio
+  hitRate: number;
+  totalHits: number;
+  // Alias for `size`
+  entries: number;
 }
 ```
 
 ## License
 
-Apache 2.0 - Pegasus Heavy Industries LLC
+Apache 2.0 - Joseph Quinn

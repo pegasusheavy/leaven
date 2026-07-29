@@ -94,7 +94,7 @@ import { SeoService } from '../services/seo.service';
             <tbody class="text-zinc-400">
               <tr class="border-b border-zinc-800/50">
                 <td class="py-3 pr-4"><code class="text-red-400">ValidationError</code></td>
-                <td class="py-3 pr-4"><code>BAD_USER_INPUT</code></td>
+                <td class="py-3 pr-4"><code>VALIDATION_ERROR</code></td>
                 <td class="py-3">400</td>
               </tr>
               <tr class="border-b border-zinc-800/50">
@@ -119,12 +119,12 @@ import { SeoService } from '../services/seo.service';
               </tr>
               <tr class="border-b border-zinc-800/50">
                 <td class="py-3 pr-4"><code class="text-red-400">ComplexityError</code></td>
-                <td class="py-3 pr-4"><code>COMPLEXITY_EXCEEDED</code></td>
+                <td class="py-3 pr-4"><code>COMPLEXITY_LIMIT</code></td>
                 <td class="py-3">400</td>
               </tr>
               <tr>
                 <td class="py-3 pr-4"><code class="text-red-400">DepthLimitError</code></td>
-                <td class="py-3 pr-4"><code>DEPTH_EXCEEDED</code></td>
+                <td class="py-3 pr-4"><code>DEPTH_LIMIT</code></td>
                 <td class="py-3">400</td>
               </tr>
             </tbody>
@@ -174,12 +174,27 @@ export class ErrorsComponent implements OnInit {
       canonical: '/errors',
       ogType: 'article'
     });
+
+    // Emit the JSON-LD counterpart of this page's TechArticle microdata,
+    // plus the breadcrumb trail rendered at the top of the article.
+    this.seoService.updateStructuredData([
+      this.seoService.generateTechArticleSchema({
+        title: 'Error Handling',
+        description: 'Handle and format GraphQL errors with @leaven-graphql/errors. Custom error types, error masking, and production-safe responses.',
+        url: '/errors'
+      }),
+      this.seoService.generateBreadcrumbSchema([
+        { name: 'Home', url: '/' },
+        { name: 'Error Handling', url: '/errors' }
+      ])
+    ]);
   }
 
   installCode = `bun add @leaven-graphql/errors`;
 
   typesCode = `import {
   LeavenError,
+  ErrorCode,
   ValidationError,
   AuthenticationError,
   AuthorizationError,
@@ -190,9 +205,8 @@ export class ErrorsComponent implements OnInit {
   InputError,
 } from '@leaven-graphql/errors';
 
-// Base error with custom code
-throw new LeavenError('Something went wrong', {
-  code: 'CUSTOM_ERROR',
+// Base error - the code is a positional second argument
+throw new LeavenError('Something went wrong', ErrorCode.INTERNAL_ERROR, {
   statusCode: 500,
 });
 
@@ -203,13 +217,15 @@ throw new AuthenticationError('Please log in to continue');
 throw new AuthorizationError('You do not have permission');
 
 // Resource not found
-throw new NotFoundError('User not found', { resource: 'User', id: '123' });
+throw new NotFoundError('User not found', {
+  resourceType: 'User',
+  resourceId: '123',
+});
 
-// Input validation failed
-throw new ValidationError('Invalid email format', {
-  field: 'email',
-  value: 'invalid-email',
-});`;
+// Input validation failed - second argument is an array of field errors
+throw new ValidationError('Invalid input', [
+  { field: 'email', message: 'Invalid email format' },
+]);`;
 
   resolverCode = `import {
   AuthenticationError,
@@ -246,10 +262,9 @@ const resolvers = {
 
     createUser: async (_, { input }, context) => {
       if (!isValidEmail(input.email)) {
-        throw new ValidationError('Invalid email format', {
-          field: 'email',
-          value: input.email,
-        });
+        throw new ValidationError('Invalid input', [
+          { field: 'email', message: 'Invalid email format' },
+        ]);
       }
       return context.db.users.create(input);
     },
@@ -260,8 +275,8 @@ const resolvers = {
 
 // Format a single error
 const formatted = formatError(error, {
+  maskErrors: false,
   includeStackTrace: false,
-  includeExtensions: true,
 });
 
 // Result:
@@ -269,24 +284,29 @@ const formatted = formatError(error, {
 //   message: "User not found",
 //   extensions: {
 //     code: "NOT_FOUND",
-//     resource: "User",
-//     id: "123"
+//     resourceType: "User",
+//     resourceId: "123"
 //   }
 // }
 
 // Format multiple errors
 const formattedErrors = formatErrors(errors, options);
 
-// Convert to GraphQL error format
+// Convert any error to a GraphQLError
 const graphqlError = errorToGraphQL(error);`;
 
-  maskCode = `import { maskError, formatError } from '@leaven-graphql/errors';
+  maskCode = `import { maskError } from '@leaven-graphql/errors';
 
-// Mask internal errors in production
+// Mask unexpected errors. Leaven errors (validation, auth, not-found, ...)
+// are recognized as intentional and are never masked.
 const maskedError = maskError(error, {
-  maskMessage: 'An unexpected error occurred',
-  maskInternalErrors: true,
-  allowedCodes: ['BAD_USER_INPUT', 'UNAUTHENTICATED', 'FORBIDDEN'],
+  maskErrors: true,
+  maskedMessage: 'An unexpected error occurred',
+});
+
+// Or decide yourself with a custom predicate
+const customMasked = maskError(error, {
+  shouldMask: (err) => err.extensions?.code === undefined,
 });
 
 // Configure with HTTP server
@@ -295,45 +315,41 @@ const server = createServer({
   errorFormatting: {
     maskErrors: process.env.NODE_ENV === 'production',
     includeStackTrace: process.env.NODE_ENV !== 'production',
-    formatError: (error) => {
-      // Custom formatting logic
-      return formatError(error, {
-        includeStackTrace: false,
-        includeExtensions: true,
-      });
-    },
   },
 });`;
 
   integrationCode = `import { createServer } from '@leaven-graphql/http';
-import { formatError, maskError, isLeavenError } from '@leaven-graphql/errors';
 
 const server = createServer({
   schema,
 
-  // Error formatting configuration
+  // Error formatting configuration (ErrorMaskingOptions)
   errorFormatting: {
+    // Mask unexpected errors in production.
+    // Leaven errors (validation, auth, not-found, ...) stay visible.
     maskErrors: process.env.NODE_ENV === 'production',
 
-    // Custom error formatter
-    formatError: (error) => {
+    // Include stack traces in development
+    includeStackTrace: process.env.NODE_ENV !== 'production',
+
+    // Custom formatter - receives the error and whether it should be masked
+    formatter: (error, masked) => {
       // Log all errors
       console.error('GraphQL Error:', error);
 
-      // Mask in production
-      if (process.env.NODE_ENV === 'production') {
-        // Keep Leaven errors visible (they're safe)
-        if (isLeavenError(error)) {
-          return formatError(error);
-        }
-        // Mask other errors
-        return maskError(error);
+      if (masked) {
+        return {
+          message: 'An unexpected error occurred',
+          extensions: { code: 'INTERNAL_ERROR' },
+        };
       }
 
-      // Include stack trace in development
-      return formatError(error, {
-        includeStackTrace: true,
-      });
+      return {
+        message: error.message,
+        locations: error.locations,
+        path: error.path,
+        extensions: error.extensions,
+      };
     },
   },
 });

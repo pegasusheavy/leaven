@@ -1,12 +1,17 @@
 /**
  * @leaven-graphql/errors - Formatter tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import { describe, test, expect } from 'bun:test';
-import { GraphQLError } from 'graphql';
+import {
+  GraphQLError,
+  parse,
+  type FieldNode,
+  type OperationDefinitionNode,
+} from 'graphql';
 import {
   formatError,
   formatErrors,
@@ -14,7 +19,12 @@ import {
   isLeavenError,
   errorToGraphQL,
 } from './formatter';
-import { LeavenError, ValidationError } from './errors';
+import {
+  LeavenError,
+  ValidationError,
+  AuthenticationError,
+  NotFoundError,
+} from './errors';
 import { ErrorCode } from './codes';
 
 describe('isLeavenError', () => {
@@ -41,10 +51,42 @@ describe('isLeavenError', () => {
 });
 
 describe('errorToGraphQL', () => {
-  test('should return GraphQLError as-is', () => {
-    const graphqlError = new GraphQLError('Test');
+  test('should return a coded GraphQLError as-is', () => {
+    const graphqlError = new GraphQLError('Test', {
+      extensions: { code: ErrorCode.FORBIDDEN },
+    });
     const result = errorToGraphQL(graphqlError);
     expect(result).toBe(graphqlError);
+  });
+
+  test('should assign INTERNAL_ERROR to a GraphQLError with no code', () => {
+    const graphqlError = new GraphQLError('boom');
+    const result = errorToGraphQL(graphqlError);
+
+    expect(result).toBeInstanceOf(GraphQLError);
+    expect(result.message).toBe('boom');
+    expect(result.extensions.code).toBe(ErrorCode.INTERNAL_ERROR);
+  });
+
+  test('should preserve locations, path and originalError when adding a code', () => {
+    const document = parse('{ user { name } }');
+    const operation = document.definitions[0] as OperationDefinitionNode;
+    const field = operation.selectionSet.selections[0] as FieldNode;
+    const cause = new Error('cause');
+    const graphqlError = new GraphQLError('boom', {
+      nodes: field,
+      path: ['user'],
+      originalError: cause,
+      extensions: { hint: 'check the query' },
+    });
+
+    const result = errorToGraphQL(graphqlError);
+
+    expect(result.extensions.code).toBe(ErrorCode.INTERNAL_ERROR);
+    expect(result.extensions.hint).toBe('check the query');
+    expect(result.locations).toEqual([{ line: 1, column: 3 }]);
+    expect(result.path).toEqual(['user']);
+    expect(result.originalError).toBe(cause);
   });
 
   test('should convert LeavenError to GraphQLError', () => {
@@ -75,14 +117,31 @@ describe('errorToGraphQL', () => {
 
 describe('maskError', () => {
   test('should not mask LeavenError', () => {
+    // Go through the real conversion path used by formatError()
     const leavenError = new LeavenError('Test', ErrorCode.BAD_REQUEST);
-    const graphqlError = new GraphQLError('Test', {
-      originalError: leavenError,
-      extensions: { code: ErrorCode.BAD_REQUEST },
-    });
+    const graphqlError = errorToGraphQL(leavenError);
     const result = maskError(graphqlError, { maskErrors: true });
 
     expect(result.message).toBe('Test');
+    expect(result.extensions?.code).toBe(ErrorCode.BAD_REQUEST);
+  });
+
+  test('should not mask LeavenError with INTERNAL_ERROR code', () => {
+    const leavenError = new LeavenError('Intentional internal error');
+    const graphqlError = errorToGraphQL(leavenError);
+    const result = maskError(graphqlError, { maskErrors: true });
+
+    expect(result.message).toBe('Intentional internal error');
+  });
+
+  test('should not mask GraphQLError carrying a known Leaven code', () => {
+    const error = new GraphQLError('Access denied', {
+      extensions: { code: ErrorCode.FORBIDDEN },
+    });
+    const result = maskError(error, { maskErrors: true });
+
+    expect(result.message).toBe('Access denied');
+    expect(result.extensions?.code).toBe(ErrorCode.FORBIDDEN);
   });
 
   test('should not mask validation errors', () => {
@@ -129,13 +188,20 @@ describe('maskError', () => {
   });
 
   test('should include locations', () => {
-    const error = new GraphQLError('Test', {
-      positions: [0],
-    });
+    // Build the error from a parsed document so `locations` is actually
+    // populated — RedisDocumentCache.reviveError relies on maskError()
+    // emitting this property.
+    const document = parse('{ user { name } }');
+    const operation = document.definitions[0] as OperationDefinitionNode;
+    const field = operation.selectionSet.selections[0] as FieldNode;
+    const error = new GraphQLError('Test', { nodes: field });
+
+    expect(error.locations).toEqual([{ line: 1, column: 3 }]);
+
     const result = maskError(error, { maskErrors: false });
 
-    // Locations depend on how the error was constructed
     expect(result.message).toBe('Test');
+    expect(result.locations).toEqual([{ line: 1, column: 3 }]);
   });
 
   test('should include path', () => {
@@ -163,6 +229,16 @@ describe('maskError', () => {
       originalError: original,
       extensions: { code: 'TEST' },
     });
+    const result = maskError(error, {
+      maskErrors: false,
+      includeStackTrace: true,
+    });
+
+    expect(result.extensions?.stackTrace).toBeDefined();
+  });
+
+  test('should include stack trace when error has no extensions', () => {
+    const error = new GraphQLError('Test');
     const result = maskError(error, {
       maskErrors: false,
       includeStackTrace: true,
@@ -206,11 +282,41 @@ describe('formatError', () => {
     expect(result.message).toBe('Test');
   });
 
+  test('should give a bare GraphQLError a fallback code', () => {
+    const result = formatError(new GraphQLError('boom'));
+
+    expect(result.message).toBe('boom');
+    expect(result.extensions?.code).toBe(ErrorCode.INTERNAL_ERROR);
+  });
+
   test('should apply options', () => {
     const error = new Error('Internal error');
     const result = formatError(error, { maskErrors: true });
 
     expect(result.message).toBe('An unexpected error occurred');
+  });
+
+  test('should not mask AuthenticationError when masking is enabled', () => {
+    const result = formatError(new AuthenticationError('Please log in'), {
+      maskErrors: true,
+    });
+
+    expect(result.message).toBe('Please log in');
+    expect(result.extensions?.code).toBe('UNAUTHENTICATED');
+  });
+
+  test('should preserve message and code of Leaven errors when masking is enabled', () => {
+    const result = formatError(
+      new NotFoundError('User not found', {
+        resourceType: 'User',
+        resourceId: '123',
+      }),
+      { maskErrors: true }
+    );
+
+    expect(result.message).toBe('User not found');
+    expect(result.extensions?.code).toBe(ErrorCode.NOT_FOUND);
+    expect(result.extensions?.resourceType).toBe('User');
   });
 });
 

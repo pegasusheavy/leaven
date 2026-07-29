@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/core - Type definitions
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -160,8 +160,12 @@ export interface ExecutionMetrics {
   validationCached?: boolean;
   /** Whether the compiled query was cached */
   queryCached: boolean;
-  /** Number of resolvers invoked */
-  resolverCount: number;
+  /**
+   * Number of resolvers invoked.
+   * Not currently tracked by the executor, which omits this field rather
+   * than reporting an inaccurate count.
+   */
+  resolverCount?: number;
   /** Complexity score of the query */
   complexity?: number;
 }
@@ -182,6 +186,19 @@ export interface ExecutionHooks<TContext = unknown> {
   onExecute?: (context: TContext, document: DocumentNode) => void | Promise<void>;
   /** Called after execution */
   onExecuted?: (result: GraphQLResponse) => void | Promise<void>;
-  /** Called on error */
+  /**
+   * Called when the operation itself fails: a parse error, a depth/token/
+   * complexity-analysis rejection, or anything thrown by an earlier hook.
+   *
+   * NOT called for resolver-level errors. Those are collected by graphql-js
+   * into `ExecutionResult.errors` and returned as a normal (partial-data)
+   * response, so the request never reaches the executor's catch path. Inspect
+   * `result.errors` in `onExecuted` to observe them.
+   */
   onError?: (error: Error) => void | Promise<void>;
+  /**
+   * Called when a background cache write fails.
+   * Cache failures never fail the request; this hook provides observability.
+   */
+  onCacheError?: (error: Error) => void | Promise<void>;
 }

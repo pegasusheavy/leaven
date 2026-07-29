@@ -79,7 +79,7 @@
   </g>
 
   <!-- Footer -->
-  <text x="250" y="570" font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#78716c">leaven.dev • Apache 2.0 • Pegasus Heavy Industries</text>
+  <text x="250" y="570" font-family="system-ui, -apple-system, sans-serif" font-size="18" fill="#78716c">leaven.dev • Apache 2.0 • Joseph Quinn</text>
 
   <!-- Decorative bread pieces -->
   <text x="950" y="280" font-size="100" opacity="0.15">🍞</text>

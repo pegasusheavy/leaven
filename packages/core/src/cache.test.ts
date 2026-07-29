@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/core - Document cache tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -118,25 +118,100 @@ describe('DocumentCache', () => {
   });
 
   describe('LRU eviction', () => {
-    test('should evict least recently used entry when at capacity', async () => {
+    test('should evict the least recently accessed entry when at capacity', () => {
       const smallCache = new DocumentCache({ maxSize: 2, lru: true });
 
       smallCache.set('{ a }', parse('{ a }'));
-      await new Promise((r) => setTimeout(r, 20)); // Ensure different timestamps
       smallCache.set('{ b }', parse('{ b }'));
-      await new Promise((r) => setTimeout(r, 20)); // Ensure different timestamps
 
-      // Access 'a' to make it more recent
+      // Access 'a' so that 'b' becomes the least recently used entry
       smallCache.get('{ a }');
-      await new Promise((r) => setTimeout(r, 20)); // Ensure update
 
-      // Add a third entry, should evict something
+      // Adding a third entry must evict 'b', not 'a'
       smallCache.set('{ c }', parse('{ c }'));
 
-      // Verify cache doesn't exceed maxSize
       expect(smallCache.size).toBe(2);
-      // At least 'c' should be there
+      expect(smallCache.has('{ a }')).toBe(true);
+      expect(smallCache.has('{ b }')).toBe(false);
       expect(smallCache.has('{ c }')).toBe(true);
+    });
+
+    test('getWithValidation should refresh recency for eviction', () => {
+      const smallCache = new DocumentCache({ maxSize: 2, lru: true });
+
+      smallCache.set('{ a }', parse('{ a }'));
+      smallCache.set('{ b }', parse('{ b }'));
+
+      // Access 'a' via getWithValidation so 'b' is least recently used
+      smallCache.getWithValidation('{ a }');
+
+      smallCache.set('{ c }', parse('{ c }'));
+
+      expect(smallCache.has('{ a }')).toBe(true);
+      expect(smallCache.has('{ b }')).toBe(false);
+    });
+  });
+
+  describe('FIFO eviction (lru: false)', () => {
+    test('should keep size bounded when inserting maxSize + 1 entries', () => {
+      const fifoCache = new DocumentCache({ maxSize: 5, lru: false });
+
+      for (let i = 0; i <= 5; i++) {
+        const query = `{ q${i} }`;
+        fifoCache.set(query, parse(query));
+      }
+
+      expect(fifoCache.size).toBe(5);
+    });
+
+    test('should evict the oldest inserted entry regardless of access', () => {
+      const fifoCache = new DocumentCache({ maxSize: 2, lru: false });
+
+      fifoCache.set('{ a }', parse('{ a }'));
+      fifoCache.set('{ b }', parse('{ b }'));
+
+      // Access 'a' — FIFO must NOT protect it from eviction
+      fifoCache.get('{ a }');
+
+      fifoCache.set('{ c }', parse('{ c }'));
+
+      expect(fifoCache.size).toBe(2);
+      expect(fifoCache.has('{ a }')).toBe(false);
+      expect(fifoCache.has('{ b }')).toBe(true);
+      expect(fifoCache.has('{ c }')).toBe(true);
+    });
+  });
+
+  describe('maxSize: 0 (caching disabled)', () => {
+    test('should store nothing via set', () => {
+      const disabled = new DocumentCache({ maxSize: 0 });
+
+      disabled.set('{ a }', parse('{ a }'));
+
+      expect(disabled.size).toBe(0);
+      expect(disabled.getStats().size).toBe(0);
+      expect(disabled.get('{ a }')).toBeNull();
+      expect(disabled.has('{ a }')).toBe(false);
+    });
+
+    test('should store nothing via setWithValidation', () => {
+      const disabled = new DocumentCache({ maxSize: 0 });
+
+      disabled.setWithValidation('{ a }', parse('{ a }'), {
+        valid: true,
+        errors: [],
+      });
+
+      expect(disabled.size).toBe(0);
+      expect(disabled.getWithValidation('{ a }')).toBeNull();
+    });
+
+    test('should treat a negative maxSize the same way', () => {
+      const disabled = new DocumentCache({ maxSize: -1 });
+
+      disabled.set('{ a }', parse('{ a }'));
+
+      expect(disabled.size).toBe(0);
     });
   });
 
@@ -181,6 +256,9 @@ describe('DocumentCache', () => {
       expect(stats.size).toBe(1);
       expect(stats.entries).toBe(1);
       expect(stats.totalHits).toBe(2);
+      // hitRate is the average number of hits per cached entry
+      // (totalHits / size), not a hit/miss ratio — misses are not tracked,
+      // so the value can exceed 1 (here: 2 hits / 1 entry = 2)
       expect(stats.hitRate).toBe(2);
     });
 

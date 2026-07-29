@@ -127,6 +127,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@leaven-graphql/errors':
+        specifier: workspace:*
+        version: link:../errors
       graphql:
         specifier: ^16.8.0
         version: 16.12.0
@@ -162,6 +165,12 @@ importers:
       '@leaven-graphql/errors':
         specifier: workspace:*
         version: link:../errors
+      '@leaven-graphql/playground':
+        specifier: workspace:*
+        version: link:../playground
+      '@leaven-graphql/ws':
+        specifier: workspace:*
+        version: link:../ws
       graphql:
         specifier: ^16.8.0
         version: 16.12.0
@@ -212,6 +221,9 @@ importers:
 
   packages/nestjs:
     dependencies:
+      '@graphql-tools/schema':
+        specifier: ^10.0.0
+        version: 10.0.31(graphql@16.12.0)
       '@leaven-graphql/context':
         specifier: workspace:*
         version: link:../context
@@ -221,6 +233,12 @@ importers:
       '@leaven-graphql/errors':
         specifier: workspace:*
         version: link:../errors
+      '@leaven-graphql/playground':
+        specifier: workspace:*
+        version: link:../playground
+      '@leaven-graphql/ws':
+        specifier: workspace:*
+        version: link:../ws
     devDependencies:
       '@nestjs/common':
         specifier: ^11.1.19
@@ -261,6 +279,9 @@ importers:
       '@leaven-graphql/core':
         specifier: workspace:*
         version: link:../core
+      '@leaven-graphql/errors':
+        specifier: workspace:*
+        version: link:../errors
       graphql:
         specifier: ^16.8.0
         version: 16.12.0

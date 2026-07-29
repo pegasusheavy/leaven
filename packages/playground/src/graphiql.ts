@@ -1,9 +1,11 @@
 /**
  * @leaven-graphql/playground - GraphiQL rendering
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
+
+import { escapeHtml, toScriptJson } from './escape';
 
 /**
  * GraphiQL configuration
@@ -66,14 +68,14 @@ export function renderGraphiQL(config: GraphiQLConfig): string {
   const fetcherCode = subscriptionEndpoint
     ? `
     const fetcher = GraphiQL.createFetcher({
-      url: ${JSON.stringify(endpoint)},
-      subscriptionUrl: ${JSON.stringify(subscriptionEndpoint)},
-      headers: ${JSON.stringify(headers)},
+      url: ${toScriptJson(endpoint)},
+      subscriptionUrl: ${toScriptJson(subscriptionEndpoint)},
+      headers: ${toScriptJson(headers)},
     });`
     : `
     const fetcher = GraphiQL.createFetcher({
-      url: ${JSON.stringify(endpoint)},
-      headers: ${JSON.stringify(headers)},
+      url: ${toScriptJson(endpoint)},
+      headers: ${toScriptJson(headers)},
     });`;
 
   const explorerPlugin = explorer
@@ -84,9 +86,15 @@ export function renderGraphiQL(config: GraphiQLConfig): string {
 
   const explorerInit = explorer
     ? `
-      const explorerPlugin = GraphiQLPluginExplorer.explorerPlugin();
-      plugins: [explorerPlugin],`
+    const explorerPlugin = GraphiQLPluginExplorer.explorerPlugin();`
     : '';
+
+  const explorerProps = explorer ? `plugins: [explorerPlugin],` : '';
+
+  // `version` lands inside double-quoted `href`/`src` attributes. Without
+  // escaping, a value containing `"` closes the attribute early and the rest
+  // becomes markup (e.g. an `onerror` handler on the script tag).
+  const versionAttr = escapeHtml(version);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -96,7 +104,7 @@ export function renderGraphiQL(config: GraphiQLConfig): string {
   <title>${escapeHtml(title)}</title>
   <link
     rel="stylesheet"
-    href="https://unpkg.com/graphiql@${version}/graphiql.min.css"
+    href="https://unpkg.com/graphiql@${versionAttr}/graphiql.min.css"
   />
   <link
     rel="shortcut icon"
@@ -124,36 +132,24 @@ export function renderGraphiQL(config: GraphiQLConfig): string {
     crossorigin
   ></script>
   <script
-    src="https://unpkg.com/graphiql@${version}/graphiql.min.js"
+    src="https://unpkg.com/graphiql@${versionAttr}/graphiql.min.js"
     crossorigin
   ></script>
   <script>
     ${fetcherCode}
-
+    ${explorerInit}
     const root = ReactDOM.createRoot(document.getElementById('graphiql'));
     root.render(
       React.createElement(GraphiQL, {
         fetcher,
-        defaultQuery: ${JSON.stringify(defaultQuery)},
-        variables: ${JSON.stringify(defaultVariables)},
-        ${explorerInit}
+        defaultQuery: ${toScriptJson(defaultQuery)},
+        variables: ${toScriptJson(defaultVariables)},
+        ${explorerProps}
       })
     );
   </script>
 </body>
 </html>`;
-}
-
-/**
- * Escape HTML special characters
- */
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 /**

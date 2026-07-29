@@ -1,13 +1,13 @@
 /**
  * @leaven-graphql/errors - Error formatting utilities
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import { GraphQLError, type GraphQLFormattedError } from 'graphql';
 import { LeavenError } from './errors';
-import { ErrorCode } from './codes';
+import { ErrorCode, getErrorCode } from './codes';
 
 /**
  * Custom error formatter function
@@ -45,7 +45,25 @@ export function isLeavenError(error: unknown): error is LeavenError {
  */
 export function errorToGraphQL(error: unknown): GraphQLError {
   if (error instanceof GraphQLError) {
-    return error;
+    if (error.extensions?.code !== undefined) {
+      return error;
+    }
+
+    // Every error leaving Leaven must carry an ErrorCode. A bare
+    // `new GraphQLError('boom')` from a resolver, or a graphql-js validation
+    // error, has no `extensions` at all, so rebuild it with the fallback code.
+    // `nodes`/`source`/`positions` are carried over so `locations` survives.
+    return new GraphQLError(error.message, {
+      nodes: error.nodes,
+      source: error.source,
+      positions: error.positions,
+      path: error.path,
+      originalError: error.originalError,
+      extensions: {
+        ...error.extensions,
+        code: ErrorCode.INTERNAL_ERROR,
+      },
+    });
   }
 
   if (isLeavenError(error)) {
@@ -80,15 +98,23 @@ function shouldMaskError(
     return options.shouldMask(error);
   }
 
-  // Don't mask Leaven errors (they're intentional)
-  const originalError = error.originalError;
-  if (isLeavenError(originalError)) {
+  // Don't mask Leaven errors (they're intentional). errorToGraphQL() attaches
+  // the LeavenError itself as `originalError`, so this covers the real
+  // formatError() path.
+  if (isLeavenError(error.originalError)) {
     return false;
   }
 
-  // Don't mask validation errors
-  const code = error.extensions?.code as string | undefined;
-  if (code === ErrorCode.VALIDATION_ERROR || code === ErrorCode.PARSE_ERROR) {
+  // Don't mask errors carrying a known Leaven error code (validation,
+  // authentication, not-found, rate limiting, ...). INTERNAL_ERROR is
+  // excluded: it is the fallback code assigned to unexpected errors, which
+  // are exactly the ones masking is meant to hide.
+  const code = error.extensions?.code;
+  if (
+    typeof code === 'string' &&
+    code !== ErrorCode.INTERNAL_ERROR &&
+    getErrorCode(code) !== null
+  ) {
     return false;
   }
 
@@ -142,10 +168,15 @@ export function maskError(
   // Include extensions
   if (error.extensions && Object.keys(error.extensions).length > 0) {
     formatted.extensions = { ...error.extensions };
+  }
 
-    // Add stack trace in development if enabled
-    if (options.includeStackTrace && error.originalError?.stack) {
-      formatted.extensions.stackTrace = error.originalError.stack
+  // Add stack trace in development if enabled, even when the error carries
+  // no extensions of its own
+  if (options.includeStackTrace) {
+    const stack = error.originalError?.stack ?? error.stack;
+    if (stack) {
+      formatted.extensions = formatted.extensions ?? {};
+      formatted.extensions.stackTrace = stack
         .split('\n')
         .map((line) => line.trim());
     }

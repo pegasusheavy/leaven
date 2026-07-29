@@ -32,6 +32,7 @@ Full configuration options:
 
 ```typescript
 import { createServer } from '@leaven-graphql/http';
+import { WebSocketHandler } from '@leaven-graphql/ws';
 
 const server = createServer({
   // Required
@@ -41,16 +42,34 @@ const server = createServer({
   port: 4000,                    // Default: 4000
   hostname: '0.0.0.0',           // Default: '0.0.0.0'
   path: '/graphql',              // Default: '/graphql'
+  development: false,            // Passed through to Bun.serve
 
   // Features
-  playground: true,              // Enable GraphQL Playground
+  playground: true,              // Enable GraphiQL (boolean only)
   introspection: true,           // Enable introspection
   cors: true,                    // Enable CORS
 
-  // Performance
-  cache: {
-    maxSize: 1000,
-    ttl: 3600000,
+  // HTTP
+  allowedMethods: ['GET', 'POST', 'OPTIONS'],  // Default: GET, POST, OPTIONS
+  response: {                    // Applied to every GraphQL response
+    pretty: false,
+    headers: { 'X-Powered-By': 'Leaven' },
+  },
+
+  // Executor options (everything except `schema` and `rootValue`, which are
+  // taken from the top level). A top-level `cache` is NOT a ServerConfig
+  // option — document caching lives here.
+  executor: {
+    cache: { maxSize: 1000, ttl: 3600000 },
+    maxDepth: 10,
+    maxComplexity: 1000,
+    metrics: false,
+  },
+
+  // Default request context (ignored when a `context` factory is supplied)
+  requestContext: {
+    trustProxy: true,
+    proxyHeaders: ['x-forwarded-for'],
   },
 
   // Error handling
@@ -60,7 +79,11 @@ const server = createServer({
   },
 
   // Body limits
-  maxBodySize: 1024 * 1024,      // 1MB
+  maxBodySize: 1024 * 1024,      // 1MB, default: 1_000_000
+  bodyReadTimeoutMs: 30_000,     // Deadline for reading a body, default: 30_000
+
+  // Subscriptions: upgrades `Upgrade: websocket` requests on `path`
+  websocket: new WebSocketHandler({ schema }),
 
   // Lifecycle hooks
   onStart: (server) => console.log('Server started'),
@@ -160,34 +183,53 @@ function createServer<TContext = unknown>(
   config: ServerConfig<TContext>
 ): LeavenServer;
 
-interface ServerConfig<TContext = unknown> {
-  schema: GraphQLSchema;
+interface ServerConfig<TContext = unknown> extends HandlerConfig<TContext> {
   port?: number;
   hostname?: string;
-  path?: string;
-  playground?: boolean | PlaygroundConfig;
-  introspection?: boolean;
-  cors?: boolean | CorsConfig;
-  cache?: boolean | DocumentCacheConfig;
-  context?: ContextFactory<TContext>;
-  errorFormatting?: ErrorMaskingOptions;
-  maxBodySize?: number;
+  development?: boolean;
   routes?: Record<string, RouteHandler>;
   fallback?: (request: Request) => Response | Promise<Response>;
+  websocket?: WebSocketHandler;
   onStart?: (server: Server) => void;
   onStop?: () => void;
   onError?: (error: Error, request: Request) => Response | Promise<Response>;
 }
+
+interface HandlerConfig<TContext = unknown> {
+  schema: GraphQLSchema;
+  context?: ContextFactory<TContext>;
+  rootValue?: unknown;
+  executor?: Omit<ExecutorConfig, 'schema' | 'rootValue'>;
+  cors?: CorsConfig | boolean;
+  playground?: boolean;
+  path?: string;
+  errorFormatting?: ErrorMaskingOptions;
+  requestContext?: RequestContextConfig;
+  response?: ResponseOptions;
+  allowedMethods?: string[];
+  introspection?: boolean;
+  maxBodySize?: number;
+  bodyReadTimeoutMs?: number;
+}
 ```
+
+Document caching, depth and complexity limits, hooks and metrics are executor
+concerns and are configured under `executor`. A top-level `cache` key is not
+part of `ServerConfig` and is ignored.
 
 ### LeavenServer
 
+The URL and port are returned by `start()`; they are not properties of the
+server instance.
+
 ```typescript
 class LeavenServer {
+  constructor(config: ServerConfig);
   start(): ServerInfo;
   stop(): void;
-  readonly url: string;
-  readonly port: number;
+  reload(): void;
+  getServer(): Server | null;
+  isRunning(): boolean;
 }
 
 interface ServerInfo {
@@ -195,6 +237,11 @@ interface ServerInfo {
   port: number;
   hostname: string;
 }
+```
+
+```typescript
+const server = createServer({ schema });
+const { url, port } = server.start();
 ```
 
 ### createHandler
@@ -212,14 +259,16 @@ type GraphQLHandler = (request: Request) => Promise<Response>;
 ```typescript
 import { parseBody, parseQuery, validateRequest } from '@leaven-graphql/http';
 
-// Parse request body (JSON, GraphQL, multipart)
+// Parse request body (JSON, GraphQL, form, multipart)
 const body = await parseBody(request);
 
-// Parse query string parameters
-const params = parseQuery(request);
+// Parse query string parameters — takes a URL, not a Request
+const params = parseQuery(new URL(request.url));
 
-// Validate a GraphQL request
+// Validate a GraphQL request. The second argument holds the parameters
+// parsed off the URL and defaults to `{}`; the body wins on conflicts.
 const validation = validateRequest(body);
+const merged = validateRequest(body, params);
 ```
 
 ### Response Utilities
@@ -233,10 +282,15 @@ const response = buildResponse(result, {
   headers: { 'X-Request-Id': '123' },
 });
 
-// Get CORS headers
-const headers = corsHeaders(config);
+// Get CORS headers — the request comes first, the config is optional
+const headers = corsHeaders(request, { origin: 'https://example.com' });
 ```
+
+`buildResponse` only derives a status when the response is a total failure
+(`data` is `undefined` or `null`). A partial success — data alongside errors —
+always stays `200`, even when the error carries a code such as `NOT_FOUND`, so
+clients do not discard data they were given.
 
 ## License
 
-Apache 2.0 - Pegasus Heavy Industries LLC
+Apache 2.0 - Joseph Quinn

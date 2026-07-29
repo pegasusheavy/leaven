@@ -1,12 +1,13 @@
 /**
  * @leaven-graphql/nestjs - Decorators tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import { describe, test, expect } from 'bun:test';
 import 'reflect-metadata';
+import type { ExecutionContext } from '@nestjs/common';
 import {
   COMPLEXITY_KEY,
   DEPRECATED_KEY,
@@ -18,8 +19,146 @@ import {
   Description,
   CacheHint,
   SubscriptionFilter,
+  Decorators,
   createContextDecorator,
+  Context,
+  Info,
+  Root,
+  Parent,
+  Args,
+  contextExtractor,
+  infoExtractor,
+  rootExtractor,
+  argsExtractor,
 } from './decorators';
+
+function createMockExecutionContext(overrides: {
+  root?: unknown;
+  args?: unknown;
+  context?: unknown;
+  info?: unknown;
+} = {}): ExecutionContext {
+  // `in`-checks (not destructuring defaults) so an explicit `args: undefined`
+  // is passed through rather than replaced by the default value.
+  const root = 'root' in overrides ? overrides.root : { id: 'root1' };
+  const args = 'args' in overrides ? overrides.args : { id: '123', name: 'test' };
+  const context =
+    'context' in overrides
+      ? overrides.context
+      : { user: { id: 'user1' }, db: { connected: true }, req: {}, res: {} };
+  const info = 'info' in overrides ? overrides.info : { fieldName: 'testField' };
+
+  return {
+    getArgs: () => [root, args, context, info],
+    getArgByIndex: (index: number) => [root, args, context, info][index],
+    getHandler: () => function testMethod() {},
+    getClass: () => class TestClass {},
+    getType: () => 'graphql',
+    switchToHttp: () => ({} as any),
+    switchToRpc: () => ({} as any),
+    switchToWs: () => ({} as any),
+  } as unknown as ExecutionContext;
+}
+
+describe('Param decorators', () => {
+  describe('Context', () => {
+    test('should be a param decorator factory', () => {
+      expect(typeof Context).toBe('function');
+      expect(typeof Context()).toBe('function');
+    });
+
+    test('extractor should return the full GraphQL context when no key is given', () => {
+      const ctx = createMockExecutionContext({
+        context: { user: { id: 'user1' }, req: {}, res: {} },
+      });
+
+      const result = contextExtractor(undefined, ctx) as Record<string, unknown>;
+
+      expect(result.user).toEqual({ id: 'user1' });
+    });
+
+    test('extractor should return a single context property for the keyed form', () => {
+      const ctx = createMockExecutionContext({
+        context: { db: { connected: true }, req: {}, res: {} },
+      });
+
+      expect(contextExtractor('db', ctx)).toEqual({ connected: true });
+    });
+
+    test('extractor should return undefined for a missing context key', () => {
+      const ctx = createMockExecutionContext({
+        context: { req: {}, res: {} },
+      });
+
+      expect(contextExtractor('missing', ctx)).toBeUndefined();
+    });
+  });
+
+  describe('Info', () => {
+    test('should be a param decorator factory', () => {
+      expect(typeof Info).toBe('function');
+      expect(typeof Info()).toBe('function');
+    });
+
+    test('extractor should return the GraphQL resolve info (4th resolver argument)', () => {
+      const info = { fieldName: 'users' };
+      const ctx = createMockExecutionContext({ info });
+
+      expect(infoExtractor(undefined, ctx)).toBe(info);
+    });
+  });
+
+  describe('Root / Parent', () => {
+    test('should be param decorator factories', () => {
+      expect(typeof Root).toBe('function');
+      expect(typeof Root()).toBe('function');
+    });
+
+    test('Parent should be an alias for Root', () => {
+      expect(Parent).toBe(Root);
+    });
+
+    test('extractor should return the root value (1st resolver argument)', () => {
+      const root = { id: '42', firstName: 'Ada' };
+      const ctx = createMockExecutionContext({ root });
+
+      expect(rootExtractor(undefined, ctx)).toBe(root);
+    });
+  });
+
+  describe('Args', () => {
+    test('should be a param decorator factory', () => {
+      expect(typeof Args).toBe('function');
+      expect(typeof Args()).toBe('function');
+    });
+
+    test('extractor should return all resolver arguments when no key is given', () => {
+      const args = { id: '123', filter: { active: true } };
+      const ctx = createMockExecutionContext({ args });
+
+      expect(argsExtractor(undefined, ctx)).toBe(args);
+    });
+
+    test('extractor should return a single argument for the keyed form', () => {
+      const ctx = createMockExecutionContext({ args: { id: '123', name: 'test' } });
+
+      expect(argsExtractor('id', ctx)).toBe('123');
+    });
+
+    test('extractor should return undefined for a missing argument key', () => {
+      const ctx = createMockExecutionContext({ args: {} });
+
+      expect(argsExtractor('missing', ctx)).toBeUndefined();
+    });
+
+    test('extractor should tolerate undefined resolver arguments', () => {
+      const ctx = createMockExecutionContext({ args: undefined });
+
+      expect(argsExtractor(undefined, ctx)).toBeUndefined();
+      expect(argsExtractor('id', ctx)).toBeUndefined();
+    });
+  });
+});
 
 describe('Decorators', () => {
   describe('Complexity', () => {
@@ -108,6 +247,209 @@ describe('Decorators', () => {
       expect(metadata).toBe(filterFn);
     });
 
+    test('should drop events the filter rejects', async () => {
+      class TestClass {
+        @SubscriptionFilter((payload: unknown, variables: unknown) => {
+          return (
+            (payload as { postId: number }).postId === (variables as { postId: number }).postId
+          );
+        })
+        public commentAdded(): AsyncGenerator<{ postId: number; body: string }> {
+          return (async function* () {
+            yield { postId: 1, body: 'first' };
+            yield { postId: 2, body: 'other post' };
+            yield { postId: 1, body: 'second' };
+          })();
+        }
+      }
+
+      // The wrapper must return the iterable synchronously, so a direct
+      // caller can `for await` the method's return value.
+      const iterator = new TestClass().commentAdded(undefined, { postId: 1 });
+      expect(typeof (iterator as AsyncGenerator<unknown>)[Symbol.asyncIterator]).toBe(
+        'function'
+      );
+
+      const received: string[] = [];
+      for await (const event of iterator) {
+        received.push(event.body);
+      }
+
+      expect(received).toEqual(['first', 'second']);
+    });
+
+    test('should filter a promise-returning source and preserve the promise', async () => {
+      class TestClass {
+        @SubscriptionFilter(
+          (payload: unknown, variables: unknown) =>
+            (payload as { postId: number }).postId ===
+            (variables as { postId: number }).postId
+        )
+        public async commentAdded(): Promise<
+          AsyncGenerator<{ postId: number; body: string }>
+        > {
+          await Promise.resolve();
+          return (async function* () {
+            yield { postId: 1, body: 'first' };
+            yield { postId: 2, body: 'other post' };
+            yield { postId: 1, body: 'second' };
+          })();
+        }
+      }
+
+      const pending = new TestClass().commentAdded(undefined, { postId: 1 });
+      expect(pending).toBeInstanceOf(Promise);
+
+      const received: string[] = [];
+      for await (const event of await pending) {
+        received.push(event.body);
+      }
+
+      expect(received).toEqual(['first', 'second']);
+    });
+
+    test('should drop only the offending event when the filter throws', async () => {
+      const originalConsoleError = console.error;
+      const logged: unknown[] = [];
+      console.error = (...args: unknown[]) => {
+        logged.push(args);
+      };
+
+      try {
+        class TestClass {
+          @SubscriptionFilter((payload: unknown) => {
+            if ((payload as { id: number }).id === 2) {
+              throw new Error('filter exploded');
+            }
+            return true;
+          })
+          public events(): AsyncGenerator<{ id: number }> {
+            return (async function* () {
+              yield { id: 1 };
+              yield { id: 2 };
+              yield { id: 3 };
+            })();
+          }
+        }
+
+        const ids: number[] = [];
+        for await (const event of new TestClass().events(undefined, {})) {
+          ids.push(event.id);
+        }
+
+        expect(ids).toEqual([1, 3]);
+        expect(logged).toHaveLength(1);
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
+
+    test('should not close the source a second time on normal completion', async () => {
+      let returnCalls = 0;
+
+      class TestClass {
+        @SubscriptionFilter(() => true)
+        public events(): AsyncIterable<{ n: number }> {
+          const inner = (async function* () {
+            yield { n: 1 };
+          })();
+
+          return {
+            [Symbol.asyncIterator]: () => ({
+              next: () => inner.next(),
+              return: (value?: unknown) => {
+                returnCalls += 1;
+                return inner.return(value as { n: number });
+              },
+            }),
+          } as AsyncIterable<{ n: number }>;
+        }
+      }
+
+      const seen: number[] = [];
+      for await (const event of new TestClass().events(undefined, {})) {
+        seen.push(event.n);
+      }
+
+      expect(seen).toEqual([1]);
+      // The source exhausted itself; `for await` must not call return() again.
+      expect(returnCalls).toBe(0);
+    });
+
+    test('should propagate the source error rather than a cleanup error', async () => {
+      class TestClass {
+        @SubscriptionFilter(() => true)
+        public events(): AsyncIterable<{ n: number }> {
+          return {
+            [Symbol.asyncIterator]: () => ({
+              next: () => Promise.reject(new Error('AuthorizationError: token expired')),
+              return: () => Promise.reject(new Error('cleanup exploded')),
+            }),
+          } as AsyncIterable<{ n: number }>;
+        }
+      }
+
+      const iterator = new TestClass().events(undefined, {});
+
+      await expect(
+        (async () => {
+          for await (const _event of iterator) {
+            // consume
+          }
+        })()
+      ).rejects.toThrow('AuthorizationError: token expired');
+    });
+
+    test('should propagate cancellation through the filter to the source', async () => {
+      let cleanedUp = false;
+
+      class TestClass {
+        @SubscriptionFilter(() => true)
+        public ticks(): AsyncGenerator<{ n: number }> {
+          return (async function* () {
+            try {
+              let n = 0;
+              while (true) {
+                yield { n: n++ };
+              }
+            } finally {
+              cleanedUp = true;
+            }
+          })();
+        }
+      }
+
+      const iterator = new TestClass().ticks(undefined, {});
+      await iterator.next();
+      await iterator.return?.(undefined);
+
+      expect(cleanedUp).toBe(true);
+    });
+
+    test('should await asynchronous filters', async () => {
+      class TestClass {
+        @SubscriptionFilter(async (payload: unknown) => {
+          await Promise.resolve();
+          return (payload as { keep: boolean }).keep;
+        })
+        public events(): AsyncGenerator<{ keep: boolean; id: number }> {
+          return (async function* () {
+            yield { keep: false, id: 1 };
+            yield { keep: true, id: 2 };
+          })();
+        }
+      }
+
+      const iterator = new TestClass().events(undefined, {});
+
+      const ids: number[] = [];
+      for await (const event of iterator) {
+        ids.push(event.id);
+      }
+
+      expect(ids).toEqual([2]);
+    });
+
     test('should execute filter function correctly', () => {
       const filterFn = (payload: { id: number }, variables: { id: number }) =>
         payload.id === variables.id;
@@ -138,8 +480,6 @@ describe('Decorators', () => {
 
   describe('Decorators', () => {
     test('should compose multiple decorators', () => {
-      const { Decorators } = require('./decorators');
-
       class TestClass {
         @Decorators(Complexity(10), Description('A test method'))
         testMethod() {}

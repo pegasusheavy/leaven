@@ -38,7 +38,7 @@
     "websocket",
     "subscriptions"
   ],
-  "author": "Pegasus Heavy Industries LLC",
+  "author": "Joseph Quinn",
   "license": "Apache-2.0",
   "dependencies": {
     "@leaven-graphql/core": "workspace:*",

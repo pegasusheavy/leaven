@@ -1,12 +1,13 @@
 /**
  * @leaven-graphql/context - Builder tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import { describe, test, expect } from 'bun:test';
 import { ContextBuilder, createContextBuilder } from './builder';
+import { RequestContext } from './request';
 import type { BaseContext } from './types';
 
 interface TestContext extends BaseContext {
@@ -119,6 +120,29 @@ describe('ContextBuilder', () => {
       const context = await extendedBuilder.build({ userId: 'user-1' });
 
       expect(context.role).toBe('user');
+    });
+
+    test('should preserve class instance prototypes through extensions', async () => {
+      const builder = new ContextBuilder<{ userAgent: string }, RequestContext>({
+        factory: (input) =>
+          new RequestContext({
+            method: 'GET',
+            url: 'http://localhost/graphql',
+            headers: { 'user-agent': input.userAgent },
+          }),
+      });
+
+      const extendedBuilder = builder.extend<{ role: string }>(() => ({
+        role: 'admin',
+      }));
+
+      const context = await extendedBuilder.build({ userAgent: 'Test/1.0' });
+
+      expect(context.role).toBe('admin');
+      expect(context).toBeInstanceOf(RequestContext);
+      expect(context.getHeader('User-Agent')).toBe('Test/1.0');
+      expect(typeof context.getElapsedTime()).toBe('number');
+      expect(context.toJSON().method).toBe('GET');
     });
   });
 

@@ -1,24 +1,52 @@
 /**
  * @leaven-graphql/nestjs - Schema Builder Integration
  *
- * Provides integration with NestJS's code-first schema building approach.
+ * Builds the module's `GraphQLSchema` from a pre-built `schema` or from SDL
+ * `typeDefs` (optionally merged with a `resolvers` map) and hands it to the
+ * driver. Code-first generation (`autoSchemaFile`) is not implemented and
+ * fails at bootstrap rather than silently.
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import { Injectable, type OnModuleInit, Inject, type Type } from '@nestjs/common';
-import type { GraphQLSchema } from 'graphql';
+import {
+  buildSchema as buildSchemaFromSDL,
+  lexicographicSortSchema,
+  parse,
+  print,
+  printSchema,
+  visit,
+  type DocumentNode,
+  type GraphQLNamedType,
+  type GraphQLObjectType,
+  type GraphQLSchema,
+} from 'graphql';
+import { makeExecutableSchema } from '@graphql-tools/schema';
 import { LEAVEN_MODULE_OPTIONS, LEAVEN_DRIVER } from './module';
 import { LeavenDriver } from './driver';
+import { DEPRECATED_KEY, DESCRIPTION_KEY } from './decorators';
 import type { LeavenModuleOptions, BuildSchemaOptions } from './types';
 
 /**
+ * Resolver map as accepted by {@link LeavenModuleOptions.resolvers}.
+ */
+type ResolverMap = Record<string, unknown> | Array<Record<string, unknown>>;
+
+/**
  * Schema source type - determines how to build the schema
+ *
+ * {@link SchemaBuilderService.buildSchema} narrows on a value of this type,
+ * so every supported configuration is enumerated here exactly once.
  */
 export type SchemaSource =
   | { type: 'provided'; schema: GraphQLSchema }
-  | { type: 'typeDefs'; typeDefs: string; resolvers: Record<string, unknown> }
+  | {
+      type: 'typeDefs';
+      typeDefs: string | DocumentNode | Array<string | DocumentNode>;
+      resolvers?: ResolverMap;
+    }
   | { type: 'autoSchema'; options: BuildSchemaOptions };
 
 /**
@@ -48,115 +76,107 @@ export class SchemaBuilderService implements OnModuleInit {
   }
 
   /**
-   * Build the schema from configured sources
+   * Classify the configured options into a {@link SchemaSource}.
+   *
+   * `schema` wins over `typeDefs`, which wins over `autoSchemaFile`.
+   * Returns `null` when no schema source is configured at all.
    */
-  public async buildSchema(): Promise<GraphQLSchema | null> {
-    // If a pre-built schema is provided, use it directly
-    if (this.options.schema) {
-      return this.options.schema;
+  private resolveSchemaSource(): SchemaSource | null {
+    const { schema, typeDefs, resolvers, autoSchemaFile, buildSchemaOptions } =
+      this.options;
+
+    if (schema) {
+      return { type: 'provided', schema };
     }
 
-    // If typeDefs are provided, build from SDL
-    if (this.options.typeDefs) {
-      return this.buildFromTypeDefs();
+    if (typeDefs) {
+      return { type: 'typeDefs', typeDefs, resolvers };
     }
 
-    // If autoSchemaFile is set, we need NestJS's schema builder
-    // This would typically be handled by @nestjs/graphql
-    if (this.options.autoSchemaFile) {
-      // Auto schema is handled by external integration
-      return null;
+    if (autoSchemaFile) {
+      return { type: 'autoSchema', options: buildSchemaOptions ?? {} };
     }
 
     return null;
   }
 
   /**
-   * Build schema from type definitions (SDL)
+   * Build the schema from configured sources
+   *
+   * @throws {Error} When only `autoSchemaFile` is configured. Leaven has no
+   * code-first pipeline, so returning `null` here would leave the driver
+   * without a schema and fail every request at runtime; failing at bootstrap
+   * points at the actual misconfiguration instead.
    */
-  private buildFromTypeDefs(): GraphQLSchema | null {
-    const { typeDefs, resolvers } = this.options;
+  public async buildSchema(): Promise<GraphQLSchema | null> {
+    const source = this.resolveSchemaSource();
 
-    if (!typeDefs || !resolvers) {
+    if (!source) {
       return null;
     }
 
-    // Use graphql-tools style schema building
-    try {
-      const { buildSchema } = require('graphql');
-      const { addResolversToSchema, makeExecutableSchema } = require('@graphql-tools/schema');
-
-      // Try makeExecutableSchema first (recommended)
-      if (makeExecutableSchema) {
-        return makeExecutableSchema({
-          typeDefs,
-          resolvers,
-        });
-      }
-
-      // Fallback to manual approach
-      const schema = buildSchema(
-        typeof typeDefs === 'string' ? typeDefs : this.mergeTypeDefs(typeDefs)
-      );
-
-      if (addResolversToSchema) {
-        return addResolversToSchema({
-          schema,
-          resolvers: Array.isArray(resolvers)
-            ? this.mergeResolvers(resolvers)
-            : resolvers,
-        });
-      }
-
-      return schema;
-    } catch (error) {
-      console.warn(
-        'Failed to build schema from typeDefs. Install @graphql-tools/schema for full support.',
-        error
-      );
-      return null;
+    switch (source.type) {
+      case 'provided':
+        return source.schema;
+      case 'typeDefs':
+        return this.buildFromTypeDefs(source.typeDefs, source.resolvers);
+      case 'autoSchema':
+        throw new Error(
+          "Failed to build the GraphQL schema: 'autoSchemaFile' was configured, but code-first " +
+            'schema generation is not implemented. Supply a pre-built executable schema via the ' +
+            "'schema' option, or SDL via 'typeDefs' (optionally with 'resolvers')."
+        );
     }
   }
 
   /**
-   * Merge multiple type definition strings
+   * Build schema from type definitions (SDL)
+   *
+   * SDL alone is a complete schema and is built with graphql-js directly.
+   * When a resolver map is supplied it is merged in with
+   * `makeExecutableSchema`, after which any `@Description`/`@Deprecated`
+   * metadata recorded on the resolver functions is applied to the matching
+   * schema fields.
    */
-  private mergeTypeDefs(typeDefs: unknown): string {
+  private async buildFromTypeDefs(
+    typeDefs: string | DocumentNode | Array<string | DocumentNode>,
+    resolvers: ResolverMap | undefined
+  ): Promise<GraphQLSchema> {
+    const sdl = this.mergeTypeDefs(typeDefs);
+
+    if (!resolvers) {
+      return buildSchemaFromSDL(sdl);
+    }
+
+    const schema = makeExecutableSchema({
+      typeDefs: sdl,
+      // `LeavenModuleOptions.resolvers` is deliberately loose so consumers do
+      // not have to depend on @graphql-tools' `IResolvers`; the shape is
+      // validated by `makeExecutableSchema` itself.
+      resolvers: resolvers as Parameters<typeof makeExecutableSchema>[0]['resolvers'],
+    });
+    applyResolverFieldMetadata(schema, resolvers);
+    return schema;
+  }
+
+  /**
+   * Normalize type definitions to a single SDL string
+   */
+  private mergeTypeDefs(
+    typeDefs: string | DocumentNode | Array<string | DocumentNode>
+  ): string {
     if (typeof typeDefs === 'string') {
       return typeDefs;
     }
 
     if (Array.isArray(typeDefs)) {
       return typeDefs
-        .map((td) => {
-          if (typeof td === 'string') {
-            return td;
-          }
-          // Handle DocumentNode - convert to string
-          const { print } = require('graphql');
-          return print(td);
-        })
+        .map((td) => (typeof td === 'string' ? td : print(td)))
         .join('\n');
     }
 
     // Handle DocumentNode
-    const { print } = require('graphql');
     return print(typeDefs);
-  }
-
-  /**
-   * Merge multiple resolver objects
-   */
-  private mergeResolvers(resolvers: Array<Record<string, unknown>>): Record<string, unknown> {
-    return resolvers.reduce((merged, resolver) => {
-      for (const [typeName, fields] of Object.entries(resolver)) {
-        merged[typeName] = {
-          ...(merged[typeName] as Record<string, unknown> || {}),
-          ...(fields as Record<string, unknown>),
-        };
-      }
-      return merged;
-    }, {} as Record<string, unknown>);
   }
 
   /**
@@ -183,6 +203,79 @@ export class SchemaBuilderService implements OnModuleInit {
 }
 
 /**
+ * Collect the resolver functions a type's resolver container exposes.
+ *
+ * Walks the prototype chain so a class instance registered as a type's
+ * resolvers contributes its methods, not just its own properties.
+ */
+function collectResolverFunctions(container: object): Map<string, Function> {
+  const functions = new Map<string, Function>();
+
+  let current: object | null = container;
+  while (current && current !== Object.prototype) {
+    for (const key of Object.getOwnPropertyNames(current)) {
+      if (key === 'constructor' || functions.has(key)) continue;
+
+      const descriptor = Object.getOwnPropertyDescriptor(current, key);
+      if (descriptor && typeof descriptor.value === 'function') {
+        functions.set(key, descriptor.value as Function);
+      }
+    }
+    current = Object.getPrototypeOf(current) as object | null;
+  }
+
+  return functions;
+}
+
+/**
+ * Apply the `@Description` and `@Deprecated` metadata recorded on resolver
+ * functions to the matching fields of a built schema.
+ *
+ * This is what makes those decorators observable: without it an annotated
+ * field is not marked deprecated in the emitted schema and every client tool
+ * reports it as current. Metadata is read only when `reflect-metadata` is
+ * loaded (it always is under NestJS), so this is a no-op otherwise.
+ */
+function applyResolverFieldMetadata(
+  schema: GraphQLSchema,
+  resolvers: ResolverMap
+): void {
+  if (typeof Reflect.getMetadata !== 'function') {
+    return;
+  }
+
+  const maps = Array.isArray(resolvers) ? resolvers : [resolvers];
+
+  for (const map of maps) {
+    for (const [typeName, container] of Object.entries(map ?? {})) {
+      if (!container || typeof container !== 'object') continue;
+
+      const type: GraphQLNamedType | undefined | null = schema.getType(typeName);
+      if (!type || typeof (type as GraphQLObjectType).getFields !== 'function') {
+        continue;
+      }
+
+      const fields = (type as GraphQLObjectType).getFields();
+
+      for (const [fieldName, fn] of collectResolverFunctions(container)) {
+        const field = fields[fieldName];
+        if (!field) continue;
+
+        const description = Reflect.getMetadata(DESCRIPTION_KEY, fn) as unknown;
+        if (typeof description === 'string') {
+          field.description = description;
+        }
+
+        const deprecationReason = Reflect.getMetadata(DEPRECATED_KEY, fn) as unknown;
+        if (typeof deprecationReason === 'string') {
+          field.deprecationReason = deprecationReason;
+        }
+      }
+    }
+  }
+}
+
+/**
  * Schema file generator options
  */
 export interface SchemaFileOptions {
@@ -203,23 +296,45 @@ export interface SchemaFileOptions {
 }
 
 /**
+ * Remove all descriptions from an SDL string
+ */
+function stripDescriptions(sdl: string): string {
+  const strippedAst = visit(parse(sdl), {
+    enter(node) {
+      if ('description' in node && node.description) {
+        const { description: _description, ...rest } = node;
+        return rest;
+      }
+      return undefined;
+    },
+  });
+
+  return print(strippedAst);
+}
+
+/**
  * Generate a schema file from the current schema
+ *
+ * Creates the parent directory if it does not exist. When
+ * `includeDescriptions` is `false`, all type, field, and argument
+ * descriptions are stripped from the emitted SDL.
  */
 export async function generateSchemaFile(
   schema: GraphQLSchema,
   options: SchemaFileOptions
 ): Promise<void> {
-  const { printSchema, lexicographicSortSchema } = require('graphql');
-  const { writeFile } = require('node:fs/promises');
+  const schemaToWrite = options.sortSchema
+    ? lexicographicSortSchema(schema)
+    : schema;
 
-  let schemaToWrite = schema;
+  let sdl = printSchema(schemaToWrite);
 
-  if (options.sortSchema) {
-    schemaToWrite = lexicographicSortSchema(schema);
+  if (options.includeDescriptions === false) {
+    sdl = stripDescriptions(sdl);
   }
 
-  const sdl = printSchema(schemaToWrite);
-  await writeFile(options.path, sdl, 'utf-8');
+  // `Bun.write` creates any missing parent directories.
+  await Bun.write(options.path, sdl);
 }
 
 /**

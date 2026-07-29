@@ -1,7 +1,8 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { CodeBlockComponent } from '../components/code-block';
+import { SeoService } from '../services/seo.service';
 
 @Component({
   selector: 'app-installation',
@@ -13,7 +14,7 @@ import { CodeBlockComponent } from '../components/code-block';
       <nav class="flex items-center gap-2 text-sm text-zinc-500 mb-8">
         <a routerLink="/" class="hover:text-white transition-colors">Home</a>
         <span>/</span>
-        <a routerLink="/docs/quick-start" class="hover:text-white transition-colors">Docs</a>
+        <a routerLink="/quick-start" class="hover:text-white transition-colors">Docs</a>
         <span>/</span>
         <span class="text-zinc-300">Installation</span>
       </nav>
@@ -86,7 +87,7 @@ import { CodeBlockComponent } from '../components/code-block';
 
       <!-- Navigation -->
       <nav class="flex items-center justify-between pt-8 border-t border-zinc-800">
-        <a routerLink="/docs/quick-start" class="group flex items-center gap-2 text-zinc-400 hover:text-white transition-colors">
+        <a routerLink="/quick-start" class="group flex items-center gap-2 text-zinc-400 hover:text-white transition-colors">
           <svg class="w-5 h-5 group-hover:-translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 17l-5-5m0 0l5-5m-5 5h12"/>
           </svg>
@@ -95,7 +96,7 @@ import { CodeBlockComponent } from '../components/code-block';
             <span class="font-medium">Quick Start</span>
           </div>
         </a>
-        <a routerLink="/docs/core/executor" class="group flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-right">
+        <a routerLink="/executor" class="group flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-right">
           <div>
             <span class="text-xs text-zinc-500 block">Next</span>
             <span class="font-medium">Executor</span>
@@ -108,7 +109,31 @@ import { CodeBlockComponent } from '../components/code-block';
     </article>
   `,
 })
-export class InstallationComponent {
+export class InstallationComponent implements OnInit {
+  constructor(private seoService: SeoService) {}
+
+  ngOnInit(): void {
+    this.seoService.updatePageSEO({
+      title: 'Installation',
+      description:
+        'Learn how to install Leaven in your project. Full or minimal installation with Bun, available @leaven-graphql packages, and recommended TypeScript configuration.',
+      keywords: [
+        'Leaven installation',
+        'install Leaven',
+        'Bun GraphQL',
+        '@leaven-graphql packages',
+        'GraphQL setup',
+      ],
+      canonical: '/installation',
+      ogType: 'article',
+      structuredData: this.seoService.generateBreadcrumbSchema([
+        { name: 'Home', url: '/' },
+        { name: 'Docs', url: '/quick-start' },
+        { name: 'Installation', url: '/installation' },
+      ]),
+    });
+  }
+
   fullInstall = `bun add @leaven-graphql/leaven graphql`;
 
   minimalInstall = `# Core only (for programmatic use)

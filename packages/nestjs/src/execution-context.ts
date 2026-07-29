@@ -4,13 +4,36 @@
  * Provides a helper class for accessing GraphQL-specific context in guards,
  * interceptors, and other NestJS constructs.
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import type { ExecutionContext, ArgumentsHost } from '@nestjs/common';
-import type { GraphQLResolveInfo } from 'graphql';
+import type { GraphQLResolveInfo, SelectionSetNode } from 'graphql';
 import type { GqlContext } from './types';
+
+/**
+ * Positional indices of the GraphQL resolver arguments as exposed by
+ * NestJS's `ExecutionContext.getArgs()` for GraphQL invocations:
+ * `[root, args, context, info]`.
+ *
+ * This is the single source of truth for the positional assumption shared by
+ * the execution-context helpers and the param decorators. Use these named
+ * indices instead of hard-coded numbers so a change in argument ordering only
+ * needs to be reflected in one place.
+ *
+ * @internal
+ */
+export const GQL_RESOLVER_ARGS = {
+  /** The root/parent value — 1st resolver argument */
+  ROOT: 0,
+  /** The resolver arguments object — 2nd resolver argument */
+  ARGS: 1,
+  /** The GraphQL context object — 3rd resolver argument */
+  CONTEXT: 2,
+  /** The `GraphQLResolveInfo` object — 4th resolver argument */
+  INFO: 3,
+} as const;
 
 /**
  * GraphQL execution context helper
@@ -53,7 +76,7 @@ export class GqlExecutionContext {
    * (root, args, context, info)
    */
   public getContext<T = GqlContext>(): T {
-    return this.args[2] as T;
+    return this.args[GQL_RESOLVER_ARGS.CONTEXT] as T;
   }
 
   /**
@@ -63,7 +86,7 @@ export class GqlExecutionContext {
    * (root, args, context, info)
    */
   public getRoot<T = unknown>(): T {
-    return this.args[0] as T;
+    return this.args[GQL_RESOLVER_ARGS.ROOT] as T;
   }
 
   /**
@@ -73,7 +96,7 @@ export class GqlExecutionContext {
    * (root, args, context, info)
    */
   public getArgs<T = Record<string, unknown>>(): T {
-    return this.args[1] as T;
+    return this.args[GQL_RESOLVER_ARGS.ARGS] as T;
   }
 
   /**
@@ -83,7 +106,7 @@ export class GqlExecutionContext {
    * (root, args, context, info)
    */
   public getInfo<T = GraphQLResolveInfo>(): T {
-    return this.args[3] as T;
+    return this.args[GQL_RESOLVER_ARGS.INFO] as T;
   }
 
   /**
@@ -187,20 +210,39 @@ export class GqlExecutionContext {
   }
 
   /**
-   * Get the path to the current field
+   * Get the field-name path to the current field
+   *
+   * List indices are omitted, so `users[3].email` yields
+   * `['users', 'email']` — the same value this method has always returned,
+   * which keeps `getPath().join('.')` stable as a metric label, log key, or
+   * cache key.
+   *
+   * @deprecated Use {@link getFullPath}, which preserves list indices and so
+   * identifies an individual element rather than a field position.
    */
   public getPath(): string[] {
+    return this.getFullPath().filter(
+      (segment): segment is string => typeof segment === 'string'
+    );
+  }
+
+  /**
+   * Get the full path to the current field
+   *
+   * Every path segment is included: field names as strings and list indices
+   * as numbers, so `users[3].email` yields `['users', 3, 'email']` and list
+   * positions remain distinguishable from field names.
+   */
+  public getFullPath(): Array<string | number> {
     const info = this.getInfo<GraphQLResolveInfo>();
     if (!info?.path) return [];
 
-    const path: string[] = [];
-    let current = info.path;
+    const path: Array<string | number> = [];
+    let current: GraphQLResolveInfo['path'] | undefined = info.path;
 
     while (current) {
-      if (typeof current.key === 'string') {
-        path.unshift(current.key);
-      }
-      current = current.prev!;
+      path.unshift(current.key);
+      current = current.prev;
     }
 
     return path;
@@ -208,41 +250,87 @@ export class GqlExecutionContext {
 
   /**
    * Get the requested fields (first level)
+   *
+   * Resolves fragment spreads (via `info.fragments`) and inline fragments,
+   * and merges the selections of every field node for the current field, so
+   * fields hidden behind `...SomeFragment` or `... on Type { ... }` are
+   * reported. Fragment cycles are tolerated. Returned names are the schema
+   * field names (not client aliases), deduplicated.
    */
   public getSelectedFields(): string[] {
     const info = this.getInfo<GraphQLResolveInfo>();
-    if (!info?.fieldNodes?.[0]?.selectionSet?.selections) return [];
+    if (!info?.fieldNodes?.length) return [];
 
-    return info.fieldNodes[0].selectionSet.selections
-      .filter((selection) => selection.kind === 'Field')
-      .map((field) => (field as { name: { value: string } }).name.value);
+    const fields = new Set<string>();
+    const visitedFragments = new Set<string>();
+
+    const collect = (selectionSet: SelectionSetNode | undefined): void => {
+      if (!selectionSet?.selections) return;
+
+      for (const selection of selectionSet.selections) {
+        if (selection.kind === 'Field') {
+          fields.add(selection.name.value);
+        } else if (selection.kind === 'InlineFragment') {
+          collect(selection.selectionSet);
+        } else if (selection.kind === 'FragmentSpread') {
+          const fragmentName = selection.name.value;
+          if (visitedFragments.has(fragmentName)) continue;
+          visitedFragments.add(fragmentName);
+          collect(info.fragments?.[fragmentName]?.selectionSet);
+        }
+      }
+    };
+
+    for (const fieldNode of info.fieldNodes) {
+      collect(fieldNode?.selectionSet);
+    }
+
+    return [...fields];
   }
+}
+
+/**
+ * Per-host cache so repeated helper calls (e.g. a guard calling
+ * `getGqlContext` then `getGqlArgs`) reuse one `GqlExecutionContext`
+ * instead of constructing a throwaway instance per call. Keyed weakly on the
+ * `ExecutionContext`, which NestJS creates per invocation, so entries are
+ * released with the request and never observed across invocations.
+ */
+const executionContextCache = new WeakMap<ExecutionContext, GqlExecutionContext>();
+
+function getCachedGqlExecutionContext(context: ExecutionContext): GqlExecutionContext {
+  let gqlContext = executionContextCache.get(context);
+  if (!gqlContext) {
+    gqlContext = GqlExecutionContext.create(context);
+    executionContextCache.set(context, gqlContext);
+  }
+  return gqlContext;
 }
 
 /**
  * Helper function to extract GraphQL context from execution context
  */
 export function getGqlContext<T = GqlContext>(context: ExecutionContext): T {
-  return GqlExecutionContext.create(context).getContext<T>();
+  return getCachedGqlExecutionContext(context).getContext<T>();
 }
 
 /**
  * Helper function to extract GraphQL args from execution context
  */
 export function getGqlArgs<T = Record<string, unknown>>(context: ExecutionContext): T {
-  return GqlExecutionContext.create(context).getArgs<T>();
+  return getCachedGqlExecutionContext(context).getArgs<T>();
 }
 
 /**
  * Helper function to extract GraphQL info from execution context
  */
 export function getGqlInfo<T = GraphQLResolveInfo>(context: ExecutionContext): T {
-  return GqlExecutionContext.create(context).getInfo<T>();
+  return getCachedGqlExecutionContext(context).getInfo<T>();
 }
 
 /**
  * Helper function to extract GraphQL root from execution context
  */
 export function getGqlRoot<T = unknown>(context: ExecutionContext): T {
-  return GqlExecutionContext.create(context).getRoot<T>();
+  return getCachedGqlExecutionContext(context).getRoot<T>();
 }

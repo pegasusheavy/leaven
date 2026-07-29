@@ -163,6 +163,20 @@ export class SchemaComponent implements OnInit {
       canonical: '/schema',
       ogType: 'article'
     });
+
+    // Emit the JSON-LD counterpart of this page's TechArticle microdata,
+    // plus the breadcrumb trail rendered at the top of the article.
+    this.seoService.updateStructuredData([
+      this.seoService.generateTechArticleSchema({
+        title: 'Schema Building',
+        description: 'Build, merge, and manage GraphQL schemas with @leaven-graphql/schema. Fluent API, file loading, and custom directives.',
+        url: '/schema'
+      }),
+      this.seoService.generateBreadcrumbSchema([
+        { name: 'Home', url: '/' },
+        { name: 'Schema Building', url: '/schema' }
+      ])
+    ]);
   }
 
   installCode = `bun add @leaven-graphql/schema graphql`;
@@ -171,29 +185,37 @@ export class SchemaComponent implements OnInit {
 
 const builder = new SchemaBuilder();
 
-// Define types
-builder.addType('User', {
-  id: 'ID!',
-  name: 'String!',
-  email: 'String!',
-  posts: '[Post!]!',
+// Define types - addType takes a single TypeDefinition object
+builder.addType({
+  name: 'User',
+  fields: {
+    id: { type: 'ID!' },
+    name: { type: 'String!' },
+    email: { type: 'String!' },
+    posts: { type: '[Post!]!' },
+  },
 });
 
-builder.addType('Post', {
-  id: 'ID!',
-  title: 'String!',
-  content: 'String',
-  author: 'User!',
+builder.addType({
+  name: 'Post',
+  fields: {
+    id: { type: 'ID!' },
+    title: { type: 'String!' },
+    content: { type: 'String' },
+    author: { type: 'User!' },
+  },
 });
 
-// Define queries
-builder.addQuery('user', {
-  type: 'User',
-  args: { id: 'ID!' },
-});
-
-builder.addQuery('users', {
-  type: '[User!]!',
+// Define query fields
+builder.addQueryFields({
+  user: {
+    type: 'User',
+    args: { id: { type: 'ID!' } },
+    resolve: (_, args, context) => findUser(args, context),
+  },
+  users: {
+    type: '[User!]!',
+  },
 });
 
 // Build the schema

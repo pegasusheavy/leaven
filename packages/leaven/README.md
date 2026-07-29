@@ -1,11 +1,11 @@
-# leaven
+# @leaven-graphql/leaven
 
-The meta-package that re-exports all Leaven modules - a high-performance GraphQL library for Bun.
+The meta-package that re-exports the Leaven runtime modules - a high-performance GraphQL library for Bun.
 
 ## Installation
 
 ```bash
-bun add leaven graphql
+bun add @leaven-graphql/leaven graphql
 ```
 
 Or install individual packages:
@@ -17,7 +17,7 @@ bun add @leaven-graphql/core @leaven-graphql/http @leaven-graphql/context @leave
 ## Quick Start
 
 ```typescript
-import { createServer, LeavenExecutor } from 'leaven';
+import { createServer, LeavenExecutor } from '@leaven-graphql/leaven';
 import { GraphQLSchema, GraphQLObjectType, GraphQLString } from 'graphql';
 
 const schema = new GraphQLSchema({
@@ -51,17 +51,31 @@ console.log('🚀 Server ready at http://localhost:4000/graphql');
 | `@leaven-graphql/ws` | WebSocket subscriptions |
 | `@leaven-graphql/context` | Request context management |
 | `@leaven-graphql/errors` | Error handling utilities |
-| `@leaven-graphql/schema` | Schema building utilities |
+| `@leaven-graphql/schema` | Schema building utilities (**selected** helpers only — see below) |
 | `@leaven-graphql/plugins` | Plugin system |
 | `@leaven-graphql/playground` | GraphQL Playground |
-| `@leaven-graphql/nestjs` | NestJS integration |
+
+The NestJS integration is **not** re-exported here — importing NestJS symbols
+from this package fails. Install it separately:
+
+```bash
+bun add @leaven-graphql/nestjs
+```
+
+`@leaven-graphql/schema` is re-exported selectively to avoid name collisions
+with core: `SchemaBuilder`, `createSchemaBuilder`, `mergeSchemas`,
+`mergeSchemasFromStrings`, `createResolvers`, `mergeResolvers`,
+`loadSchemaFromFile`, and `loadSchemaFromDirectory`. Anything else — the
+directive helpers, for instance — imports from `@leaven-graphql/schema`
+directly. This package has a single entry point; there are no
+`@leaven-graphql/leaven/*` subpaths.
 
 ## Usage
 
 ### From Core
 
 ```typescript
-import { LeavenExecutor } from 'leaven';
+import { LeavenExecutor } from '@leaven-graphql/leaven';
 
 const executor = new LeavenExecutor({
   schema,
@@ -77,7 +91,7 @@ const result = await executor.execute({
 ### From HTTP
 
 ```typescript
-import { createServer, createHandler } from 'leaven';
+import { createServer, createHandler } from '@leaven-graphql/leaven';
 
 const server = createServer({
   schema,
@@ -92,7 +106,7 @@ server.start();
 ### From Context
 
 ```typescript
-import { createRequestContext, ContextStore } from 'leaven';
+import { createRequestContext, ContextStore } from '@leaven-graphql/leaven';
 
 const context = createRequestContext(request);
 console.log(context.requestId);
@@ -105,7 +119,7 @@ import {
   AuthenticationError,
   AuthorizationError,
   NotFoundError
-} from 'leaven';
+} from '@leaven-graphql/leaven';
 
 throw new AuthenticationError('Please log in');
 ```
@@ -113,35 +127,55 @@ throw new AuthenticationError('Please log in');
 ### From Schema
 
 ```typescript
-import { SchemaBuilder, mergeSchemas } from 'leaven';
+import { SchemaBuilder, mergeSchemas } from '@leaven-graphql/leaven';
 
 const builder = new SchemaBuilder();
-builder.addType('User', { id: 'ID!', name: 'String!' });
-builder.addQuery('users', { type: '[User!]!' });
+
+builder.addType({
+  name: 'User',
+  fields: {
+    id: { type: 'ID!' },
+    name: { type: 'String!' },
+  },
+});
+
+builder.addQueryFields({
+  users: { type: '[User!]!', resolve: () => db.users.findAll() },
+});
 
 const schema = builder.build();
 ```
 
 ### From Plugins
 
+`LeavenExecutor` has no `plugins` option and no transport dispatches plugin
+hooks, so plugins are wired manually through a `PluginManager`:
+
 ```typescript
 import {
+  createPluginManager,
   createLoggingPlugin,
   createDepthLimitPlugin,
   createComplexityPlugin
-} from 'leaven';
+} from '@leaven-graphql/leaven';
 
-const plugins = [
-  createLoggingPlugin({ logger: console }),
-  createDepthLimitPlugin({ maxDepth: 10 }),
-  createComplexityPlugin({ maxComplexity: 1000 }),
-];
+const plugins = createPluginManager({
+  schema,
+  plugins: [
+    createLoggingPlugin({ logger: console }),
+    createDepthLimitPlugin({ maxDepth: 10 }),
+    createComplexityPlugin({ maxComplexity: 1000 }),
+  ],
+});
 ```
+
+See the [root README](../../README.md#-plugin-system) for the full
+`beforeParse` → `afterParse` → `beforeExecute` → `afterExecute` wiring.
 
 ### From WebSocket
 
 ```typescript
-import { createPubSub } from 'leaven';
+import { createPubSub } from '@leaven-graphql/leaven';
 
 const pubsub = createPubSub();
 
@@ -182,4 +216,4 @@ For full documentation, visit the [Leaven Documentation](https://leaven.dev).
 
 ## License
 
-Apache 2.0 - Pegasus Heavy Industries LLC
+Apache 2.0 - Joseph Quinn

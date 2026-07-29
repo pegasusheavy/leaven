@@ -1,12 +1,13 @@
 /**
  * @leaven-graphql/nestjs - Middleware tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 import { GraphQLSchema, GraphQLObjectType, GraphQLString } from 'graphql';
+import { AuthenticationError } from '@leaven-graphql/errors';
 import { GraphQLMiddleware, createGraphQLMiddleware } from './middleware';
 import { LeavenDriver } from './driver';
 import type { LeavenModuleOptions } from './types';
@@ -14,6 +15,9 @@ import type { LeavenModuleOptions } from './types';
 interface Request {
   method: string;
   path: string;
+  originalUrl?: string;
+  url?: string;
+  secure?: boolean;
   body?: Record<string, unknown>;
   headers: Record<string, string | string[] | undefined>;
 }
@@ -200,7 +204,7 @@ describe('GraphQLMiddleware', () => {
       expect(next).not.toHaveBeenCalled();
     });
 
-    test('should handle OPTIONS with CORS disabled', async () => {
+    test('should delegate OPTIONS to next() when CORS is disabled', async () => {
       const noCorsOptions: LeavenModuleOptions = {
         schema,
         path: '/graphql',
@@ -219,7 +223,71 @@ describe('GraphQLMiddleware', () => {
 
       await noCorsMiddleware.use(req, res, next);
 
-      expect(res._status).toBe(204);
+      expect(next).toHaveBeenCalled();
+      expect(res._headers['Access-Control-Allow-Origin']).toBeUndefined();
+    });
+
+    test('should not set CORS headers on POST responses when CORS is disabled', async () => {
+      const noCorsOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        cors: false,
+      };
+      const noCorsDriver = new LeavenDriver(noCorsOptions);
+      await noCorsDriver.onModuleInit();
+      const noCorsMiddleware = new GraphQLMiddleware(noCorsDriver, noCorsOptions);
+
+      const req = createMockRequest({
+        method: 'POST',
+        path: '/graphql',
+        body: { query: '{ hello }' },
+      });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await noCorsMiddleware.use(req, res, next);
+
+      expect(res._status).toBe(200);
+      expect(res._headers['Access-Control-Allow-Origin']).toBeUndefined();
+    });
+
+    test('should emit no CORS headers on POST when cors is left unset', async () => {
+      // CORS is opt-in. A stock module must not answer every GraphQL POST
+      // with a wildcard origin.
+      const req = createMockRequest({
+        method: 'POST',
+        path: '/graphql',
+        body: { query: '{ hello }' },
+        headers: {
+          'content-type': 'application/json',
+          origin: 'https://evil.test',
+        },
+      });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await middleware.use(req, res, next);
+
+      expect(res._status).toBe(200);
+      expect(res._body).toEqual({ data: { hello: 'world' } });
+      expect(res._headers['Access-Control-Allow-Origin']).toBeUndefined();
+      expect(res._headers['Access-Control-Allow-Methods']).toBeUndefined();
+      expect(res._headers['Access-Control-Allow-Headers']).toBeUndefined();
+    });
+
+    test('should delegate OPTIONS to next() when cors is left unset', async () => {
+      const req = createMockRequest({
+        method: 'OPTIONS',
+        path: '/graphql',
+        headers: { origin: 'https://evil.test' },
+      });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await middleware.use(req, res, next);
+
+      expect(next).toHaveBeenCalled();
+      expect(res._headers['Access-Control-Allow-Origin']).toBeUndefined();
     });
 
     test('should handle OPTIONS with default CORS (true)', async () => {
@@ -243,6 +311,37 @@ describe('GraphQLMiddleware', () => {
 
       expect(res._status).toBe(204);
       expect(res._headers['Access-Control-Allow-Origin']).toBe('*');
+    });
+
+    test('should include CORS headers on POST responses', async () => {
+      const corsOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        cors: {
+          origin: 'https://example.com',
+          credentials: true,
+          exposedHeaders: ['X-Request-Id', 'X-Trace-Id'],
+        },
+      };
+      const corsDriver = new LeavenDriver(corsOptions);
+      await corsDriver.onModuleInit();
+      const corsMiddleware = new GraphQLMiddleware(corsDriver, corsOptions);
+
+      const req = createMockRequest({
+        method: 'POST',
+        path: '/graphql',
+        body: { query: '{ hello }' },
+      });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await corsMiddleware.use(req, res, next);
+
+      expect(res._status).toBe(200);
+      expect(res._body).toEqual({ data: { hello: 'world' } });
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('https://example.com');
+      expect(res._headers['Access-Control-Allow-Credentials']).toBe('true');
+      expect(res._headers['Access-Control-Expose-Headers']).toBe('X-Request-Id, X-Trace-Id');
     });
 
     test('should return 400 for missing query', async () => {
@@ -359,7 +458,153 @@ describe('GraphQLMiddleware', () => {
       expect(res._status).toBe(200);
     });
 
-    test('should handle CORS with array origin', async () => {
+    test('should pass a Fetch API Request to the context factory', async () => {
+      let authHeader: string | null = null;
+      let requestUrl = '';
+      let requestMethod = '';
+      let parsedBody: unknown = null;
+
+      const contextOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        context: async (request) => {
+          authHeader = request.headers.get('authorization');
+          requestUrl = request.url;
+          requestMethod = request.method;
+          parsedBody = await request.json();
+          return { auth: authHeader };
+        },
+      };
+      const contextDriver = new LeavenDriver(contextOptions);
+      await contextDriver.onModuleInit();
+      const contextMiddleware = new GraphQLMiddleware(contextDriver, contextOptions);
+
+      const req = createMockRequest({
+        method: 'POST',
+        path: '/graphql',
+        body: { query: '{ hello }' },
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer test-token',
+          host: 'api.example.com',
+        },
+      });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await contextMiddleware.use(req, res, next);
+
+      expect(res._status).toBe(200);
+      expect(res._body).toEqual({ data: { hello: 'world' } });
+      expect(authHeader).toBe('Bearer test-token');
+      expect(requestUrl).toBe('http://api.example.com/graphql');
+      expect(requestMethod).toBe('POST');
+      expect(parsedBody).toEqual({ query: '{ hello }' });
+    });
+
+    /**
+     * Build a middleware whose context factory records the synthesized
+     * `Request.url`, run one POST through it, and return that URL.
+     */
+    async function captureContextRequestUrl(
+      req: Request,
+      extraOptions: Partial<LeavenModuleOptions> = {}
+    ): Promise<string> {
+      let requestUrl = '';
+      const captureOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        ...extraOptions,
+        context: async (request) => {
+          requestUrl = request.url;
+          return {};
+        },
+      };
+      const captureDriver = new LeavenDriver(captureOptions);
+      await captureDriver.onModuleInit();
+      const captureMiddleware = new GraphQLMiddleware(captureDriver, captureOptions);
+
+      await captureMiddleware.use(req, createMockResponse(), mock(() => {}));
+      await captureDriver.onModuleDestroy();
+
+      return requestUrl;
+    }
+
+    test('should preserve the query string in the synthesized request URL', async () => {
+      const req = createMockRequest({
+        method: 'POST',
+        path: '/graphql',
+        originalUrl: '/graphql?trace=abc123',
+        body: { query: '{ hello }' },
+      });
+
+      const requestUrl = await captureContextRequestUrl(req);
+
+      expect(requestUrl).toBe('http://localhost/graphql?trace=abc123');
+    });
+
+    test('should ignore a malformed Host header instead of trusting it', async () => {
+      const req = createMockRequest({
+        method: 'POST',
+        path: '/graphql',
+        body: { query: '{ hello }' },
+        headers: {
+          'content-type': 'application/json',
+          host: 'attacker.test/evil?x=1',
+        },
+      });
+
+      const requestUrl = await captureContextRequestUrl(req);
+
+      expect(requestUrl).toBe('http://localhost/graphql');
+    });
+
+    test('should not 500 on a Host header that cannot form a URL', async () => {
+      const req = createMockRequest({
+        method: 'POST',
+        path: '/graphql',
+        body: { query: '{ hello }' },
+        headers: {
+          'content-type': 'application/json',
+          host: 'user@[not-an-authority]:99999',
+        },
+      });
+      const res = createMockResponse();
+
+      const contextOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        context: async () => ({}),
+      };
+      const contextDriver = new LeavenDriver(contextOptions);
+      await contextDriver.onModuleInit();
+      const contextMiddleware = new GraphQLMiddleware(contextDriver, contextOptions);
+
+      await contextMiddleware.use(req, res, mock(() => {}));
+
+      expect(res._status).toBe(200);
+      await contextDriver.onModuleDestroy();
+    });
+
+    test('should prefer the configured publicUrl over the Host header', async () => {
+      const req = createMockRequest({
+        method: 'POST',
+        path: '/graphql',
+        body: { query: '{ hello }' },
+        headers: {
+          'content-type': 'application/json',
+          host: 'attacker.test',
+        },
+      });
+
+      const requestUrl = await captureContextRequestUrl(req, {
+        publicUrl: 'https://api.example.com',
+      });
+
+      expect(requestUrl).toBe('https://api.example.com/graphql');
+    });
+
+    test('should reflect an allowlisted origin and vary on Origin', async () => {
       const arrayOriginOptions: LeavenModuleOptions = {
         schema,
         path: '/graphql',
@@ -374,13 +619,114 @@ describe('GraphQLMiddleware', () => {
       const req = createMockRequest({
         method: 'OPTIONS',
         path: '/graphql',
+        headers: { origin: 'https://b.com' },
       });
       const res = createMockResponse();
       const next = mock(() => {});
 
       await arrayOriginMiddleware.use(req, res, next);
 
-      expect(res._headers['Access-Control-Allow-Origin']).toBe('https://a.com, https://b.com');
+      // Never the invalid `a, b` join, and never the wildcard
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('https://b.com');
+      expect(res._headers['Vary']).toBe('Origin');
+    });
+
+    test('should emit no origin header for an origin outside the allowlist', async () => {
+      const arrayOriginOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        cors: {
+          origin: ['https://a.com', 'https://b.com'],
+        },
+      };
+      const arrayOriginDriver = new LeavenDriver(arrayOriginOptions);
+      await arrayOriginDriver.onModuleInit();
+      const arrayOriginMiddleware = new GraphQLMiddleware(arrayOriginDriver, arrayOriginOptions);
+
+      const req = createMockRequest({
+        method: 'OPTIONS',
+        path: '/graphql',
+        headers: { origin: 'https://evil.test' },
+      });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await arrayOriginMiddleware.use(req, res, next);
+
+      expect(res._headers['Access-Control-Allow-Origin']).toBeUndefined();
+      expect(res._headers['Vary']).toBe('Origin');
+    });
+
+    test('should emit no origin header when origin is false', async () => {
+      const denyOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        cors: { origin: false },
+      };
+      const denyDriver = new LeavenDriver(denyOptions);
+      await denyDriver.onModuleInit();
+      const denyMiddleware = new GraphQLMiddleware(denyDriver, denyOptions);
+
+      const req = createMockRequest({
+        method: 'OPTIONS',
+        path: '/graphql',
+        headers: { origin: 'https://evil.test' },
+      });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await denyMiddleware.use(req, res, next);
+
+      expect(res._headers['Access-Control-Allow-Origin']).toBeUndefined();
+    });
+
+    test('should echo the request origin when origin is true', async () => {
+      const trueOriginOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        cors: { origin: true },
+      };
+      const trueOriginDriver = new LeavenDriver(trueOriginOptions);
+      await trueOriginDriver.onModuleInit();
+      const trueOriginMiddleware = new GraphQLMiddleware(trueOriginDriver, trueOriginOptions);
+
+      const req = createMockRequest({
+        method: 'OPTIONS',
+        path: '/graphql',
+        headers: { origin: 'https://app.example.com' },
+      });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await trueOriginMiddleware.use(req, res, next);
+
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('https://app.example.com');
+      expect(res._headers['Vary']).toBe('Origin');
+    });
+
+    test('should never pair the wildcard with credentials', async () => {
+      const credentialOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        cors: { credentials: true },
+      };
+      const credentialDriver = new LeavenDriver(credentialOptions);
+      await credentialDriver.onModuleInit();
+      const credentialMiddleware = new GraphQLMiddleware(credentialDriver, credentialOptions);
+
+      const req = createMockRequest({
+        method: 'OPTIONS',
+        path: '/graphql',
+        headers: { origin: 'https://app.example.com' },
+      });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await credentialMiddleware.use(req, res, next);
+
+      expect(res._headers['Access-Control-Allow-Origin']).toBe('https://app.example.com');
+      expect(res._headers['Access-Control-Allow-Credentials']).toBe('true');
+      expect(res._headers['Vary']).toBe('Origin');
     });
 
     test('should handle CORS with array methods', async () => {
@@ -465,9 +811,78 @@ describe('GraphQLMiddleware', () => {
       await brokenMiddleware.use(req, res, next);
 
       expect(res._status).toBe(500);
-      expect(res._body).toEqual({
-        errors: [{ message: 'Executor not initialized. Set schema first.' }],
+      const errors = (res._body as { errors: Array<{ message: string }> }).errors;
+      expect(errors).toHaveLength(1);
+      expect(errors[0]?.message).toBe('Executor not initialized. Set schema first.');
+    });
+
+    test('should preserve the status and code of a Leaven error from the context factory', async () => {
+      const authOptions: LeavenModuleOptions = {
+        schema,
+        path: '/graphql',
+        context: async () => {
+          throw new AuthenticationError('Token expired');
+        },
+      };
+      const authDriver = new LeavenDriver(authOptions);
+      await authDriver.onModuleInit();
+      const authMiddleware = new GraphQLMiddleware(authDriver, authOptions);
+
+      const req = createMockRequest({
+        method: 'POST',
+        path: '/graphql',
+        body: { query: '{ hello }' },
       });
+      const res = createMockResponse();
+      const next = mock(() => {});
+
+      await authMiddleware.use(req, res, next);
+
+      expect(res._status).toBe(401);
+      const errors = (res._body as {
+        errors: Array<{ message: string; extensions?: Record<string, unknown> }>;
+      }).errors;
+      expect(errors[0]?.message).toBe('Token expired');
+      expect(errors[0]?.extensions?.code).toBe('UNAUTHENTICATED');
+
+      await authDriver.onModuleDestroy();
+    });
+
+    test('should mask an unexpected context-factory error in production', async () => {
+      const originalEnv = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+
+      try {
+        const leakyOptions: LeavenModuleOptions = {
+          schema,
+          path: '/graphql',
+          context: async () => {
+            throw new Error('postgres://user:password@db.internal');
+          },
+        };
+        const leakyDriver = new LeavenDriver(leakyOptions);
+        await leakyDriver.onModuleInit();
+        const leakyMiddleware = new GraphQLMiddleware(leakyDriver, leakyOptions);
+
+        const req = createMockRequest({
+          method: 'POST',
+          path: '/graphql',
+          body: { query: '{ hello }' },
+        });
+        const res = createMockResponse();
+        const next = mock(() => {});
+
+        await leakyMiddleware.use(req, res, next);
+
+        expect(res._status).toBe(500);
+        const errors = (res._body as { errors: Array<{ message: string }> }).errors;
+        expect(errors[0]?.message).toBe('An unexpected error occurred');
+        expect(errors[0]?.message).not.toContain('password');
+
+        await leakyDriver.onModuleDestroy();
+      } finally {
+        process.env.NODE_ENV = originalEnv;
+      }
     });
   });
 

@@ -37,10 +37,11 @@
     "bun",
     "plugins"
   ],
-  "author": "Pegasus Heavy Industries LLC",
+  "author": "Joseph Quinn",
   "license": "Apache-2.0",
   "dependencies": {
     "@leaven-graphql/core": "workspace:*",
+    "@leaven-graphql/errors": "workspace:*",
     "graphql": "^16.8.0"
   },
   "devDependencies": {

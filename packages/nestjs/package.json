@@ -27,15 +27,18 @@
     "README.md"
   ],
   "scripts": {
-    "build": "bun build ./src/index.ts --outdir ./dist --target bun --external @nestjs/* --external reflect-metadata --external rxjs --external graphql --external class-transformer --external class-validator --external @leaven-graphql/* && tsc -p tsconfig.build.json",
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun --external @nestjs/* --external reflect-metadata --external rxjs --external graphql --external @graphql-tools/* --external class-transformer --external class-validator --external @leaven-graphql/* && tsc -p tsconfig.build.json",
     "clean": "rm -rf dist",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@graphql-tools/schema": "^10.0.0",
     "@leaven-graphql/core": "workspace:*",
     "@leaven-graphql/context": "workspace:*",
-    "@leaven-graphql/errors": "workspace:*"
+    "@leaven-graphql/errors": "workspace:*",
+    "@leaven-graphql/playground": "workspace:*",
+    "@leaven-graphql/ws": "workspace:*"
   },
   "peerDependencies": {
     "@nestjs/common": ">=10.0.0",
@@ -61,10 +64,10 @@
     "api"
   ],
   "license": "Apache-2.0",
-  "author": "Pegasus Heavy Industries LLC",
+  "author": "Joseph Quinn",
   "repository": {
     "type": "git",
-    "url": "https://github.com/PegasusHeavyIndustries/leaven.git",
+    "url": "https://github.com/quinnjr/leaven.git",
     "directory": "packages/nestjs"
   }
 }

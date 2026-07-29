@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/core - Registry tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -130,15 +130,93 @@ describe('OperationRegistry', () => {
       expect(retrieved?.id).toBe(registered.id);
     });
 
-    test('should match partial hash', () => {
+    test('should require an exact hash match', () => {
       const registered = registry.register('{ hello }');
-      const retrieved = registry.getByHash(registered.hash.slice(0, 8));
 
-      expect(retrieved).toBeDefined();
+      expect(registry.getByHash(registered.hash.slice(0, 8))).toBeNull();
+      expect(registry.getByHash(registered.hash.slice(0, 63))).toBeNull();
+    });
+
+    test('should return null for empty string', () => {
+      registry.register('{ hello }');
+
+      expect(registry.getByHash('')).toBeNull();
+    });
+
+    test('should return null for a 2-character prefix', () => {
+      const registered = registry.register('{ hello }');
+
+      expect(registry.getByHash(registered.hash.slice(0, 2))).toBeNull();
     });
 
     test('should return null for non-existent hash', () => {
       expect(registry.getByHash('abc123')).toBeNull();
+    });
+
+    test('should return null after the operation is unregistered', () => {
+      const registered = registry.register('{ hello }');
+      registry.unregister(registered.id);
+
+      expect(registry.getByHash(registered.hash)).toBeNull();
+    });
+
+    test('should still resolve a shared hash after one of two IDs is unregistered', () => {
+      const first = registry.register('{ hello }', { id: 'first' });
+      registry.register('{ hello }', { id: 'second' });
+
+      registry.unregister('second');
+
+      expect(registry.getByHash(first.hash)?.id).toBe('first');
+    });
+
+    test('should return null after clear', () => {
+      const registered = registry.register('{ hello }');
+      registry.clear();
+
+      expect(registry.getByHash(registered.hash)).toBeNull();
+    });
+  });
+
+  describe('findByHashPrefix', () => {
+    test('should find an operation by an 8+ character prefix', () => {
+      const registered = registry.register('{ hello }');
+      const retrieved = registry.findByHashPrefix(registered.hash.slice(0, 8));
+
+      expect(retrieved).toBeDefined();
+      expect(retrieved?.id).toBe(registered.id);
+    });
+
+    test('should find an operation by its full hash', () => {
+      const registered = registry.register('{ hello }');
+
+      expect(registry.findByHashPrefix(registered.hash)?.id).toBe(registered.id);
+    });
+
+    test('should throw for prefixes shorter than 8 characters', () => {
+      const registered = registry.register('{ hello }');
+
+      expect(() => registry.findByHashPrefix('')).toThrow(/at least 8/);
+      expect(() => registry.findByHashPrefix(registered.hash.slice(0, 2))).toThrow(/at least 8/);
+      expect(() => registry.findByHashPrefix(registered.hash.slice(0, 7))).toThrow(/at least 8/);
+    });
+
+    test('should return null when no operation matches', () => {
+      registry.register('{ hello }');
+
+      expect(registry.findByHashPrefix('0123456789abcdef')).toBeNull();
+    });
+
+    test('should return null when the prefix is ambiguous', () => {
+      const first = registry.register('{ hello }');
+      // SHA-256 hashes of distinct queries will not share an 8-char prefix
+      // in practice, so inject a colliding operation to exercise ambiguity
+      // detection.
+      const internals = registry as unknown as {
+        operations: Map<string, typeof first>;
+      };
+      internals.operations.set('collider', { ...first, id: 'collider' });
+
+      expect(registry.findByHashPrefix(first.hash.slice(0, 8))).toBeNull();
     });
   });
 
@@ -161,6 +239,19 @@ describe('OperationRegistry', () => {
 
     test('should return false for non-registered hash', () => {
       expect(registry.hasHash('nonexistent')).toBe(false);
+    });
+
+    test('should return false for empty string', () => {
+      registry.register('{ hello }');
+
+      expect(registry.hasHash('')).toBe(false);
+    });
+
+    test('should return false for a partial hash', () => {
+      const op = registry.register('{ hello }');
+
+      expect(registry.hasHash(op.hash.slice(0, 2))).toBe(false);
+      expect(registry.hasHash(op.hash.slice(0, 8))).toBe(false);
     });
   });
 
@@ -261,6 +352,28 @@ describe('OperationRegistry', () => {
       const imported = registry.import(data);
 
       expect(imported).toBe(1);
+    });
+
+    test('should report failed entries via onError while importing valid ones', () => {
+      const data = {
+        hello: { query: '{ hello }' },
+        invalid: { query: '{ nonexistent }' },
+      };
+
+      const failures: Array<{ id: string; query: string; error: Error }> = [];
+      const imported = registry.import(data, (entry, error) => {
+        failures.push({ id: entry.id, query: entry.query, error });
+      });
+
+      expect(imported).toBe(1);
+      expect(registry.size).toBe(1);
+      expect(registry.has('hello')).toBe(true);
+
+      expect(failures.length).toBe(1);
+      expect(failures[0]?.id).toBe('invalid');
+      expect(failures[0]?.query).toBe('{ nonexistent }');
+      expect(failures[0]?.error).toBeInstanceOf(Error);
+      expect(failures[0]?.error.message).toMatch(/Invalid operation/);
     });
   });
 

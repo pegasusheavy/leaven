@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/errors - Error codes tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -12,6 +12,7 @@ describe('ErrorCode', () => {
   test('should have all expected error codes', () => {
     expect(ErrorCode.INTERNAL_ERROR).toBe('INTERNAL_ERROR');
     expect(ErrorCode.BAD_REQUEST).toBe('BAD_REQUEST');
+    expect(ErrorCode.PAYLOAD_TOO_LARGE).toBe('PAYLOAD_TOO_LARGE');
     expect(ErrorCode.VALIDATION_ERROR).toBe('VALIDATION_ERROR');
     expect(ErrorCode.PARSE_ERROR).toBe('PARSE_ERROR');
     expect(ErrorCode.UNAUTHENTICATED).toBe('UNAUTHENTICATED');
@@ -46,6 +47,7 @@ describe('ERROR_CODES', () => {
     expect(ERROR_CODES[ErrorCode.FORBIDDEN].status).toBe(403);
     expect(ERROR_CODES[ErrorCode.NOT_FOUND].status).toBe(404);
     expect(ERROR_CODES[ErrorCode.RATE_LIMITED].status).toBe(429);
+    expect(ERROR_CODES[ErrorCode.PAYLOAD_TOO_LARGE].status).toBe(413);
   });
 });
 
@@ -54,6 +56,9 @@ describe('getErrorCode', () => {
     expect(getErrorCode('INTERNAL_ERROR')).toBe(ErrorCode.INTERNAL_ERROR);
     expect(getErrorCode('BAD_REQUEST')).toBe(ErrorCode.BAD_REQUEST);
     expect(getErrorCode('NOT_FOUND')).toBe(ErrorCode.NOT_FOUND);
+    // @leaven-graphql/http emits this code for oversized request bodies and
+    // relies on buildResponse resolving it through the registry.
+    expect(getErrorCode('PAYLOAD_TOO_LARGE')).toBe(ErrorCode.PAYLOAD_TOO_LARGE);
   });
 
   test('should return null for invalid code string', () => {

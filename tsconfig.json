@@ -11,6 +11,7 @@
       "@leaven-graphql/errors": ["packages/errors/src"],
       "@leaven-graphql/plugins": ["packages/plugins/src"],
       "@leaven-graphql/playground": ["packages/playground/src"],
+      "@leaven-graphql/nestjs": ["packages/nestjs/src"],
       "@leaven-graphql/leaven": ["packages/leaven/src"]
     }
   },
@@ -23,6 +24,7 @@
     { "path": "packages/errors" },
     { "path": "packages/plugins" },
     { "path": "packages/playground" },
+    { "path": "packages/nestjs" },
     { "path": "packages/leaven" }
   ]
 }

@@ -1,7 +1,7 @@
 /**
  * @leaven-graphql/ws - Protocol tests
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
@@ -82,8 +82,87 @@ describe('parseMessage', () => {
     expect(() => parseMessage('{}')).toThrow(/must have a type/);
   });
 
+  // `JSON.parse` accepts all of these, so without an explicit guard the
+  // `message.type` dereference throws an engine TypeError ("null is not an
+  // object …") that the server hands straight back as a close reason
+  test.each([['null'], ['[]'], ['[{"type":"ping"}]'], ['"ping"'], ['42'], ['true']])(
+    'should throw a protocol error for non-object JSON: %s',
+    (text) => {
+      expect(() => parseMessage(text)).toThrow(/Message must be an object/);
+      expect(() => parseMessage(text)).not.toThrow(/is not an object \(evaluating/);
+    }
+  );
+
+  test('should throw for a non-string type', () => {
+    expect(() => parseMessage('{"type":42}')).toThrow(/Invalid message type: 42/);
+  });
+
   test('should throw for invalid type', () => {
     expect(() => parseMessage('{"type":"invalid"}')).toThrow(/Invalid message type/);
+  });
+
+  test('should throw for subscribe message without id', () => {
+    expect(() =>
+      parseMessage('{"type":"subscribe","payload":{"query":"{ hello }"}}')
+    ).toThrow(/must have a string id/);
+  });
+
+  test('should throw for complete message without id', () => {
+    expect(() => parseMessage('{"type":"complete"}')).toThrow(/must have a string id/);
+  });
+
+  test('should throw for next message without id', () => {
+    expect(() => parseMessage('{"type":"next","payload":{"data":{}}}')).toThrow(
+      /must have a string id/
+    );
+  });
+
+  test('should throw for error message without id', () => {
+    expect(() =>
+      parseMessage('{"type":"error","payload":[{"message":"x"}]}')
+    ).toThrow(/must have a string id/);
+  });
+
+  test('should throw for non-string id', () => {
+    expect(() => parseMessage('{"id":1,"type":"complete"}')).toThrow(
+      /must have a string id/
+    );
+  });
+
+  test('should accept id-less frames when requireId is false', () => {
+    // Client-side parsing of SERVER -> client frames from a lenient peer must
+    // not throw just because the id was omitted
+    expect(
+      parseMessage('{"type":"next","payload":{"data":{}}}', { requireId: false }).type
+    ).toBe(MessageType.Next);
+    expect(
+      parseMessage('{"type":"error","payload":[{"message":"x"}]}', {
+        requireId: false,
+      }).type
+    ).toBe(MessageType.Error);
+    expect(parseMessage('{"type":"complete"}', { requireId: false }).type).toBe(
+      MessageType.Complete
+    );
+  });
+
+  test('should still validate type when requireId is false', () => {
+    expect(() => parseMessage('{"type":"bogus"}', { requireId: false })).toThrow(
+      /Invalid message type/
+    );
+  });
+
+  test('should require id by default when options are omitted', () => {
+    expect(() => parseMessage('{"type":"complete"}', {})).toThrow(
+      /must have a string id/
+    );
+  });
+
+  test('should not require id for connection_init, ping, or pong', () => {
+    expect(parseMessage('{"type":"connection_init"}').type).toBe(
+      MessageType.ConnectionInit
+    );
+    expect(parseMessage('{"type":"ping"}').type).toBe(MessageType.Ping);
+    expect(parseMessage('{"type":"pong"}').type).toBe(MessageType.Pong);
   });
 });
 

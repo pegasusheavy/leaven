@@ -11,21 +11,27 @@ bun add @leaven-graphql/schema graphql
 ## Quick Start
 
 ```typescript
-import { SchemaBuilder, createSchemaBuilder } from '@leaven-graphql/schema';
+import { SchemaBuilder } from '@leaven-graphql/schema';
 
 const builder = new SchemaBuilder();
 
-// Define types
-builder.addType('User', {
-  id: 'ID!',
-  name: 'String!',
-  email: 'String!',
+// Define types — addType takes a single TypeDefinition object
+builder.addType({
+  name: 'User',
+  fields: {
+    id: { type: 'ID!' },
+    name: { type: 'String!' },
+    email: { type: 'String!' },
+  },
 });
 
-// Define queries
-builder.addQuery('user', {
-  type: 'User',
-  args: { id: 'ID!' },
+// Define query fields
+builder.addQueryFields({
+  user: {
+    type: 'User',
+    args: { id: { type: 'ID!' } },
+    resolve: (_parent, { id }, context) => context.db.users.findById(id),
+  },
 });
 
 // Build the schema
@@ -36,7 +42,8 @@ const schema = builder.build();
 
 ### Schema Builder
 
-Fluent API for building schemas programmatically:
+Fluent API for building schemas programmatically. Every `add*` method takes a
+single configuration object and returns the builder, so calls can be chained.
 
 ```typescript
 import { SchemaBuilder } from '@leaven-graphql/schema';
@@ -44,57 +51,150 @@ import { SchemaBuilder } from '@leaven-graphql/schema';
 const builder = new SchemaBuilder();
 
 // Add object types
-builder.addType('User', {
-  id: 'ID!',
-  name: 'String!',
-  email: 'String!',
-  posts: '[Post!]!',
+builder.addType({
+  name: 'User',
+  fields: {
+    id: { type: 'ID!' },
+    name: { type: 'String!' },
+    email: { type: 'String!' },
+    posts: { type: '[Post!]!' },
+  },
 });
 
-builder.addType('Post', {
-  id: 'ID!',
-  title: 'String!',
-  content: 'String',
-  author: 'User!',
+builder.addType({
+  name: 'Post',
+  fields: {
+    id: { type: 'ID!' },
+    title: { type: 'String!' },
+    content: { type: 'String' },
+    author: { type: 'User!' },
+  },
 });
 
-// Add queries
-builder.addQuery('user', {
-  type: 'User',
-  args: { id: 'ID!' },
+// Add an input type
+builder.addInputType({
+  name: 'CreateUserInput',
+  fields: {
+    name: { type: 'String!' },
+    email: { type: 'String!' },
+  },
 });
 
-builder.addQuery('users', {
-  type: '[User!]!',
+// Add query fields — one call may register several fields
+builder.addQueryFields({
+  user: {
+    type: 'User',
+    args: { id: { type: 'ID!' } },
+    resolve: (_parent, { id }, context) => context.db.users.findById(id),
+  },
+  users: {
+    type: '[User!]!',
+    resolve: (_parent, _args, context) => context.db.users.findAll(),
+  },
 });
 
-// Add mutations
-builder.addMutation('createUser', {
-  type: 'User!',
-  args: {
-    name: 'String!',
-    email: 'String!',
+// Add mutation fields
+builder.addMutationFields({
+  createUser: {
+    type: 'User!',
+    args: { input: { type: 'CreateUserInput!' } },
+    resolve: (_parent, { input }, context) => context.db.users.create(input),
+  },
+});
+
+// Add subscription fields — `subscribe` produces the event stream, and each
+// payload is handed to `resolve` (or the default resolver) as the parent value
+builder.addSubscriptionFields({
+  userCreated: {
+    type: 'User!',
+    subscribe: (_parent, _args, context) => context.pubsub.subscribe('userCreated'),
   },
 });
 
 const schema = builder.build();
 ```
 
+Scalars, enums, interfaces and unions each take their own config object:
+
+```typescript
+builder.addScalar({
+  name: 'Date',
+  description: 'An ISO-8601 date-time',
+  serialize: (value) => (value as Date).toISOString(),
+  parseValue: (value) => new Date(value as string),
+});
+
+builder.addEnum({
+  name: 'Status',
+  values: {
+    ACTIVE: { value: 'active' },
+    INACTIVE: { value: 'inactive', deprecationReason: 'Use ACTIVE' },
+  },
+});
+
+builder.addInterface({
+  name: 'Node',
+  fields: { id: { type: 'ID!' } },
+});
+
+builder.addType({
+  name: 'Cat',
+  interfaces: ['Node'],
+  fields: { id: { type: 'ID!' }, meows: { type: 'Boolean!' } },
+});
+
+builder.addUnion({
+  name: 'Pet',
+  types: ['Cat', 'Dog'],
+  resolveType: (value) => (value.meows !== undefined ? 'Cat' : 'Dog'),
+});
+```
+
+Resolvers can also be attached separately from the type definitions with
+`applyResolvers`. Unknown type and field names throw, so typos fail while the
+schema is being assembled instead of resolving to `null` at runtime:
+
+```typescript
+builder.addType({
+  name: 'User',
+  fields: {
+    firstName: { type: 'String!' },
+    lastName: { type: 'String!' },
+    fullName: { type: 'String!' },
+  },
+});
+
+builder.applyResolvers({
+  User: {
+    fullName: (user) => `${user.firstName} ${user.lastName}`,
+  },
+});
+```
+
+`build()` may be called more than once; each call returns a fresh schema that
+reflects everything registered so far, including resolvers applied after an
+earlier build.
+
 ### Schema Merging
 
-Combine multiple schemas:
+Combine multiple schemas. Types that appear in more than one source are merged
+field by field, so every source keeps its `Query`, `Mutation` and
+`Subscription` fields — along with their resolvers.
 
 ```typescript
 import { mergeSchemas, mergeSchemasFromStrings } from '@leaven-graphql/schema';
 
 // Merge existing schemas
-const merged = mergeSchemas([
-  usersSchema,
-  postsSchema,
-  commentsSchema,
-]);
+const merged = mergeSchemas([usersSchema, postsSchema, commentsSchema]);
 
-// Merge from SDL strings
+// Optionally attach extra resolvers and pick a conflict policy
+const withOverrides = mergeSchemas(
+  [usersSchema, postsSchema],
+  { Query: { users: () => [] } },
+  { onTypeConflict: 'last' }
+);
+
+// Merge from SDL strings — `extend type` is always folded into the base type
 const schema = mergeSchemasFromStrings([
   `
     type Query {
@@ -117,89 +217,141 @@ const schema = mergeSchemasFromStrings([
 ]);
 ```
 
+`onTypeConflict` decides who wins when two sources define the same thing:
+
+| Value | `mergeSchemas` (per field) | `mergeSchemasFromStrings` (per definition) |
+| --- | --- | --- |
+| `'first'` (default) | first schema to define the field wins | first non-extension definition wins |
+| `'last'` | last schema to define the field wins | last non-extension definition wins |
+| `'error'` | throws when two schemas define the same field | throws on a duplicate non-extension definition |
+
+`extend type ...` is always merged into its base definition, including under
+`'error'`. Note the argument order: the **second** parameter of both functions
+is the resolvers map and the **third** is the options bag. Passing
+`{ onTypeConflict: 'last' }` as the second argument sets no options — it is
+read as a resolvers map, and any name in it that is not a type in the merged
+schema throws.
+
 ### Resolvers
 
-Create and merge type-safe resolvers:
+Create and merge type-safe resolvers. `mergeResolvers` is variadic — pass the
+resolver maps as separate arguments, not as an array.
 
 ```typescript
 import { createResolvers, mergeResolvers } from '@leaven-graphql/schema';
 
 const userResolvers = createResolvers({
   Query: {
-    user: async (_, { id }, context) => {
-      return context.db.users.findById(id);
-    },
-    users: async (_, __, context) => {
-      return context.db.users.findAll();
-    },
+    user: async (_parent, { id }, context) => context.db.users.findById(id),
+    users: async (_parent, _args, context) => context.db.users.findAll(),
   },
   User: {
-    posts: async (user, _, context) => {
-      return context.db.posts.findByAuthor(user.id);
-    },
+    posts: async (user, _args, context) => context.db.posts.findByAuthor(user.id),
   },
 });
 
 const postResolvers = createResolvers({
   Query: {
-    posts: async (_, __, context) => {
-      return context.db.posts.findAll();
-    },
+    posts: async (_parent, _args, context) => context.db.posts.findAll(),
   },
   Post: {
-    author: async (post, _, context) => {
-      return context.db.users.findById(post.authorId);
-    },
+    author: async (post, _args, context) => context.db.users.findById(post.authorId),
   },
 });
 
-// Merge resolvers
-const resolvers = mergeResolvers([userResolvers, postResolvers]);
+// Merge resolvers — variadic, one argument per resolver map
+const resolvers = mergeResolvers(userResolvers, postResolvers);
+```
+
+Helpers for common resolver shapes:
+
+```typescript
+import { wrapResolver, defaultResolver, constantResolver } from '@leaven-graphql/schema';
+
+// Wrap a resolver with middleware
+const logged = wrapResolver(
+  (parent, args, context, info) => context.db.users.findAll(),
+  (next, parent, args, context, info) => {
+    console.log(info.fieldName);
+    return next(parent, args, context, info);
+  }
+);
+
+const name = defaultResolver('name');      // (parent) => parent.name
+const version = constantResolver('1.0.0'); // () => '1.0.0'
 ```
 
 ### File Loaders
 
-Load schemas from .graphql files:
+Load schemas from `.graphql` files. Directory and glob loaders read files in
+sorted path order and merge them, so `extend type` definitions spread across
+files are combined.
 
 ```typescript
 import {
   loadSchemaFromFile,
   loadSchemaFromDirectory,
-  loadSchemaFromGlob
+  loadSchemaFromGlob,
+  loadTypeDefsFromDirectory,
 } from '@leaven-graphql/schema';
 
 // Load a single file
 const schema1 = await loadSchemaFromFile('./schema.graphql');
 
 // Load all files in a directory
-const schema2 = await loadSchemaFromDirectory('./schemas');
+const schema2 = await loadSchemaFromDirectory('./schemas', { recursive: true });
 
 // Load files matching a glob pattern
-const schema3 = await loadSchemaFromGlob('./modules/**/*.graphql');
+const schema3 = await loadSchemaFromGlob('**/*.graphql', { cwd: './modules' });
+
+// Read the SDL without building, to merge it with resolvers yourself
+const typeDefs = await loadTypeDefsFromDirectory('./schemas');
+const schema4 = mergeSchemasFromStrings(typeDefs, resolvers);
 ```
 
 ### Custom Directives
 
-Create and apply custom directives:
+`createDirective` builds a `GraphQLDirective`; `addDirective` installs it on a
+schema; `applyDirectives` runs schema transformers keyed by directive name.
+Directive argument types are declared as `'String'`, `'Boolean'` or `'Int'`.
 
 ```typescript
-import { createDirective, applyDirectives } from '@leaven-graphql/schema';
+import { DirectiveLocation } from 'graphql';
+import {
+  createDirective,
+  addDirective,
+  addDirectives,
+  applyDirectives,
+  getDirectiveValues,
+} from '@leaven-graphql/schema';
 
 // Create an @auth directive
 const authDirective = createDirective({
   name: 'auth',
-  locations: ['FIELD_DEFINITION'],
+  description: 'Requires authentication',
+  locations: [DirectiveLocation.FIELD_DEFINITION],
   args: {
-    requires: 'Role = USER',
-  },
-  transform: (schema, directiveArgs) => {
-    return wrapFieldWithAuth(schema, directiveArgs.requires);
+    requires: { type: 'String', defaultValue: 'USER' },
   },
 });
 
-// Apply directives to schema
-const schema = applyDirectives(baseSchema, [authDirective]);
+// Install transformers keyed by directive name
+const schema = applyDirectives(baseSchema, {
+  auth: (input) => addDirective(input, authDirective),
+});
+
+// Installing several at once rebuilds the schema only once
+const schema2 = addDirectives(baseSchema, [authDirective, cacheControlDirective]);
+
+// Read the arguments a directive was applied with
+const fields = schema.getQueryType()!.toConfig().fields;
+const args = getDirectiveValues(fields.secret!, 'auth'); // { requires: 'ADMIN' } | null
 ```
+
+`authDirective`, `cacheControlDirective` and `specDeprecatedDirective` are
+exported ready-made. `specDeprecatedDirective` is a replica of the spec
+`@deprecated` directive that graphql-js already installs on every schema, so
+passing it to `addDirective` is a no-op.
 
 ## API Reference
 
@@ -207,43 +359,243 @@ const schema = applyDirectives(baseSchema, [authDirective]);
 
 ```typescript
 class SchemaBuilder {
-  addType(name: string, fields: Record<string, string | FieldDefinition>): this;
-  addInput(name: string, fields: Record<string, string>): this;
-  addEnum(name: string, values: string[]): this;
-  addInterface(name: string, fields: Record<string, string | FieldDefinition>): this;
-  addUnion(name: string, types: string[]): this;
-  addQuery(name: string, definition: FieldDefinition): this;
-  addMutation(name: string, definition: FieldDefinition): this;
-  addSubscription(name: string, definition: FieldDefinition): this;
+  constructor(config?: SchemaBuilderConfig);
+
+  addScalar(config: ScalarConfig): this;
+  addEnum(config: EnumConfig): this;
+  addInterface(config: InterfaceConfig): this;
+  addUnion(config: UnionConfig): this;
+  addType(definition: TypeDefinition): this;
+  addInputType(definition: InputTypeDefinition): this;
+
+  addQueryFields(fields: Record<string, FieldDefinition>): this;
+  addMutationFields(fields: Record<string, FieldDefinition>): this;
+  addSubscriptionFields(fields: Record<string, FieldDefinition>): this;
+
+  applyResolvers(resolvers: Resolvers): this;
   build(): GraphQLSchema;
+}
+
+function createSchemaBuilder(config?: SchemaBuilderConfig): SchemaBuilder;
+
+interface SchemaBuilderConfig {
+  query?: boolean;        // default true
+  mutation?: boolean;     // default true
+  subscription?: boolean; // default true
+}
+
+interface FieldDefinition {
+  type: string; // e.g. "String", "Int!", "[User!]!"
+  description?: string;
+  deprecationReason?: string;
+  args?: Record<string, { type: string; description?: string; defaultValue?: unknown }>;
+  resolve?: (parent: unknown, args: unknown, context: unknown, info: unknown) => unknown;
+  subscribe?: (parent: unknown, args: unknown, context: unknown, info: unknown) => unknown;
+}
+
+interface TypeDefinition {
+  name: string;
+  description?: string;
+  fields: Record<string, FieldDefinition>;
+  interfaces?: string[];
+}
+
+interface InputTypeDefinition {
+  name: string;
+  description?: string;
+  fields: Record<string, { type: string; description?: string; defaultValue?: unknown }>;
+}
+
+interface ScalarConfig {
+  name: string;
+  description?: string;
+  serialize: (value: unknown) => unknown;
+  parseValue: (value: unknown) => unknown;
+  parseLiteral?: (ast: unknown) => unknown;
+}
+
+interface EnumConfig {
+  name: string;
+  description?: string;
+  values: Record<string, { value?: unknown; description?: string; deprecationReason?: string }>;
+}
+
+interface InterfaceConfig {
+  name: string;
+  description?: string;
+  fields: Record<string, {
+    type: string;
+    description?: string;
+    args?: Record<string, { type: string; description?: string; defaultValue?: unknown }>;
+  }>;
+  resolveType?: (value: unknown, context: unknown, info: unknown) => string | null;
+}
+
+interface UnionConfig {
+  name: string;
+  description?: string;
+  types: string[];
+  resolveType?: (value: unknown, context: unknown, info: unknown) => string | null;
 }
 ```
 
 ### Schema Merging
 
 ```typescript
-function mergeSchemas(schemas: GraphQLSchema[], options?: MergeOptions): GraphQLSchema;
-function mergeSchemasFromStrings(sdls: string[], options?: MergeOptions): GraphQLSchema;
+function mergeSchemas(
+  schemas: GraphQLSchema[],
+  resolvers?: Resolvers,
+  options?: MergeOptions
+): GraphQLSchema;
+
+function mergeSchemasFromStrings(
+  typeDefs: string[],
+  resolvers?: Resolvers,
+  options?: MergeOptions
+): GraphQLSchema;
 
 interface MergeOptions {
-  onTypeConflict?: 'error' | 'first' | 'last' | 'merge';
-  onFieldConflict?: 'error' | 'first' | 'last';
+  onTypeConflict?: 'error' | 'first' | 'last'; // default 'first'
 }
+```
+
+### Resolvers
+
+```typescript
+function createResolvers<TContext = unknown>(
+  resolvers: Resolvers<TContext>
+): Resolvers<TContext>;
+
+function mergeResolvers<TContext = unknown>(
+  ...resolverSets: Array<Resolvers<TContext>>
+): Resolvers<TContext>;
+
+function wrapResolver<TResult, TParent, TContext, TArgs>(
+  resolver: ResolverFn<TResult, TParent, TContext, TArgs>,
+  middleware: (
+    next: ResolverFn<TResult, TParent, TContext, TArgs>,
+    parent: TParent,
+    args: TArgs,
+    context: TContext,
+    info: GraphQLResolveInfo
+  ) => TResult | Promise<TResult>
+): ResolverFn<TResult, TParent, TContext, TArgs>;
+
+function defaultResolver<TParent>(fieldName: keyof TParent): ResolverFn;
+function constantResolver<TResult>(value: TResult): ResolverFn;
+
+type ResolverFn<TResult, TParent, TContext, TArgs> = (
+  parent: TParent,
+  args: TArgs,
+  context: TContext,
+  info: GraphQLResolveInfo
+) => TResult | Promise<TResult>;
+
+interface FieldResolver<TResult, TParent, TContext, TArgs> {
+  resolve?: ResolverFn<TResult, TParent, TContext, TArgs>;
+  subscribe?: ResolverFn<AsyncIterator<TResult>, TParent, TContext, TArgs>;
+}
+
+type Resolvers<TContext = unknown> = {
+  [typeName: string]: {
+    [fieldName: string]: ResolverFn | FieldResolver;
+  };
+};
 ```
 
 ### File Loaders
 
 ```typescript
-function loadSchemaFromFile(path: string, options?: LoaderOptions): Promise<GraphQLSchema>;
-function loadSchemaFromDirectory(path: string, options?: LoaderOptions): Promise<GraphQLSchema>;
-function loadSchemaFromGlob(pattern: string, options?: LoaderOptions): Promise<GraphQLSchema>;
+function loadSchemaFromFile(
+  filePath: string,
+  options?: LoaderOptions
+): Promise<GraphQLSchema>;
+
+function loadSchemaFromDirectory(
+  directoryPath: string,
+  options?: LoaderOptions & MergeOptions
+): Promise<GraphQLSchema>;
+
+function loadSchemaFromGlob(
+  pattern: string,
+  options?: LoaderOptions & MergeOptions & { cwd?: string }
+): Promise<GraphQLSchema>;
+
+function loadTypeDefsFromFile(filePath: string): Promise<string>;
+
+function loadTypeDefsFromDirectory(
+  directoryPath: string,
+  options?: LoaderOptions
+): Promise<string[]>;
+
+function loadTypeDefsFromGlob(
+  pattern: string,
+  options?: LoaderOptions & { cwd?: string }
+): Promise<string[]>;
 
 interface LoaderOptions {
+  /** File extensions to load (default: ['.graphql', '.gql']) */
+  extensions?: string[];
+  /** @deprecated Ignored — files are always read as UTF-8. Removed in 0.3.0. */
   encoding?: BufferEncoding;
-  resolvers?: Resolvers;
+  /** Whether to recursively search directories */
+  recursive?: boolean;
 }
 ```
 
+`loadSchemaFromFile` ignores its options bag entirely; it accepts one only so
+it keeps the same call signature as the directory and glob loaders.
+
+### Directives
+
+```typescript
+function createDirective(config: DirectiveConfig): GraphQLDirective;
+
+function addDirective(
+  schema: GraphQLSchema,
+  directive: GraphQLDirective
+): GraphQLSchema;
+
+function addDirectives(
+  schema: GraphQLSchema,
+  directives: readonly GraphQLDirective[]
+): GraphQLSchema;
+
+function applyDirectives(
+  schema: GraphQLSchema,
+  transformers: Record<string, DirectiveTransformer>
+): GraphQLSchema;
+
+function getDirectiveValues(
+  field: GraphQLFieldConfig<unknown, unknown>,
+  directiveName: string
+): Record<string, unknown> | null;
+
+interface DirectiveConfig {
+  name: string;
+  description?: string;
+  locations: DirectiveLocation[];
+  args?: Record<string, {
+    type: 'String' | 'Boolean' | 'Int';
+    description?: string;
+    defaultValue?: unknown;
+  }>;
+}
+
+type DirectiveTransformer = (
+  schema: GraphQLSchema,
+  directiveName: string
+) => GraphQLSchema;
+
+const specDeprecatedDirective: GraphQLDirective;
+const authDirective: GraphQLDirective;
+const cacheControlDirective: GraphQLDirective;
+```
+
+`addDirective` rebuilds the whole schema on every call, so installing N
+directives one at a time costs O(N × schema size); `addDirectives` pays that
+cost once.
+
 ## License
 
-Apache 2.0 - Pegasus Heavy Industries LLC
+Apache 2.0 - Joseph Quinn

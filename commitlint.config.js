@@ -31,8 +31,13 @@ export default {
     'subject-empty': [2, 'never'],
     // Subject should not end with period
     'subject-full-stop': [2, 'never', '.'],
-    // Subject should be in sentence case
-    'subject-case': [2, 'always', 'sentence-case'],
+    // Subject uses lowercase imperative mood (see .cursor/rules/commits.mdc);
+    // disallow cased styles per the config-conventional default
+    'subject-case': [
+      2,
+      'never',
+      ['sentence-case', 'start-case', 'pascal-case', 'upper-case'],
+    ],
     // Header max length
     'header-max-length': [2, 'always', 100],
   },

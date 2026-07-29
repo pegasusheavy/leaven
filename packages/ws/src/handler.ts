@@ -1,11 +1,11 @@
 /**
  * @leaven-graphql/ws - WebSocket handler
  *
- * Copyright 2026 Pegasus Heavy Industries LLC
+ * Copyright 2026 Joseph Quinn
  * Licensed under the Apache License, Version 2.0
  */
 
-import type { GraphQLSchema } from 'graphql';
+import { OperationTypeNode, getOperationAST, parse, type GraphQLSchema } from 'graphql';
 import type { ServerWebSocket } from 'bun';
 import type { GraphQLRequest } from '@leaven-graphql/core';
 
@@ -118,7 +118,29 @@ export class WebSocketHandler<TContext = unknown> {
    * Generate a unique connection ID
    */
   private generateConnectionId(): string {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return crypto.randomUUID();
+  }
+
+  /**
+   * Invoke a user-supplied lifecycle hook without letting its failure escape.
+   *
+   * These hooks are called from places with no caller able to catch: iterator
+   * consumption stacks inside the subscription manager, timer callbacks, and
+   * Bun's `void`-returning socket callbacks. A rejected promise dropped into
+   * one of those slots is an unhandled rejection, which by default aborts the
+   * process and takes every other connection with it.
+   */
+  private invokeHook(name: string, invoke: () => void | Promise<void>): void {
+    try {
+      const result = invoke();
+      if (result instanceof Promise) {
+        result.catch((error) => {
+          console.error(`${name} failed:`, error);
+        });
+      }
+    } catch (error) {
+      console.error(`${name} failed:`, error);
+    }
   }
 
   /**
@@ -151,7 +173,9 @@ export class WebSocketHandler<TContext = unknown> {
     message: string | Buffer
   ): Promise<void> {
     try {
-      const parsed = parseMessage(message);
+      // Inbound client frames must carry a routable id; state it explicitly so
+      // the server's strictness is visible at the call site
+      const parsed = parseMessage(message, { requireId: true });
       await this.processMessage(socket, parsed);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Invalid message';
@@ -206,6 +230,12 @@ export class WebSocketHandler<TContext = unknown> {
     socket: ServerWebSocket<WebSocketContext>,
     params?: Record<string, unknown>
   ): Promise<void> {
+    // Reject repeated connection_init (graphql-ws close code 4429)
+    if (socket.data.initialized) {
+      socket.close(4429, 'Too many initialisation requests');
+      return;
+    }
+
     // Clear init timeout
     const timeout = this.initTimeouts.get(socket.data.connectionId);
     if (timeout) {
@@ -253,6 +283,11 @@ export class WebSocketHandler<TContext = unknown> {
       return;
     }
 
+    // Register the ID synchronously, BEFORE any await, so a concurrent
+    // Subscribe frame with the same ID is caught by the duplicate check
+    // above while this one is still setting up
+    socket.data.subscriptions.add(id);
+
     const request: GraphQLRequest = {
       query: payload.query,
       operationName: payload.operationName,
@@ -260,37 +295,86 @@ export class WebSocketHandler<TContext = unknown> {
       extensions: payload.extensions,
     };
 
-    // Call onSubscribe hook
-    await this.onSubscribe?.(socket, id, request);
+    try {
+      // Call onSubscribe hook
+      await this.onSubscribe?.(socket, id, request);
 
-    // Build context
-    let context: TContext | undefined;
-    if (this.contextFactory) {
-      context = await this.contextFactory(socket, request);
-    }
-
-    socket.data.subscriptions.add(id);
-
-    // Create subscription
-    await this.subscriptionManager.subscribe(
-      socket.data.connectionId,
-      id,
-      request,
-      context,
-      (result) => {
-        socket.send(formatMessage(createNextMessage(id, result.data, result.errors)));
-      },
-      () => {
-        socket.send(formatMessage(createCompleteMessage(id)));
-        socket.data.subscriptions.delete(id);
-        this.onComplete?.(socket, id);
-      },
-      (errors) => {
-        socket.send(formatMessage(createErrorMessage(id, errors)));
-        socket.data.subscriptions.delete(id);
-        this.onComplete?.(socket, id);
+      // Build context
+      let context: TContext | undefined;
+      if (this.contextFactory) {
+        context = await this.contextFactory(socket, request);
       }
-    );
+
+      // A Subscribe frame is the graphql-ws transport for EVERY operation,
+      // not just subscriptions. A query or mutation yields a single Next
+      // followed by Complete; routing it into graphql-js `subscribe()` would
+      // fail with "Schema is not configured to execute subscription
+      // operation."
+      if (!this.isSubscriptionOperation(request)) {
+        const response = await this.subscriptionManager.execute(request, context);
+
+        // Errors raised BEFORE execution (validation, variable coercion) are
+        // an Error message; errors raised DURING execution ride inside the
+        // single Next. The executor omits `data` entirely in the former case,
+        // which is what separates the two here.
+        if (response.data === undefined && response.errors && response.errors.length > 0) {
+          socket.send(formatMessage(createErrorMessage(id, response.errors)));
+        } else {
+          socket.send(formatMessage(createNextMessage(id, response.data, response.errors)));
+          socket.send(formatMessage(createCompleteMessage(id)));
+        }
+
+        socket.data.subscriptions.delete(id);
+        this.invokeHook('onComplete hook', () => this.onComplete?.(socket, id));
+        return;
+      }
+
+      // Create subscription
+      await this.subscriptionManager.subscribe(
+        socket.data.connectionId,
+        id,
+        request,
+        context,
+        (result) => {
+          socket.send(formatMessage(createNextMessage(id, result.data, result.errors)));
+        },
+        () => {
+          socket.send(formatMessage(createCompleteMessage(id)));
+          socket.data.subscriptions.delete(id);
+          this.invokeHook('onComplete hook', () => this.onComplete?.(socket, id));
+        },
+        (errors) => {
+          socket.send(formatMessage(createErrorMessage(id, errors)));
+          socket.data.subscriptions.delete(id);
+          this.invokeHook('onComplete hook', () => this.onComplete?.(socket, id));
+        }
+      );
+    } catch (error) {
+      // Per graphql-ws, operation setup failures are reported as an Error
+      // message on the offending ID — the connection (and its other
+      // subscriptions) must stay open
+      const errorText = error instanceof Error ? error.message : 'Subscription failed';
+      socket.send(formatMessage(createErrorMessage(id, [{ message: errorText }])));
+      socket.data.subscriptions.delete(id);
+      // Terminal, like the other three paths: the id is finished, so the
+      // hook fires here too rather than only for operations that reached
+      // 'active'
+      this.invokeHook('onComplete hook', () => this.onComplete?.(socket, id));
+    }
+  }
+
+  /**
+   * Whether a request's selected operation is a subscription.
+   *
+   * A document graphql-js cannot resolve to a single operation (no operations
+   * at all, or several with no `operationName`) is reported as a subscription
+   * so the executor produces the precise error rather than this method
+   * guessing at one.
+   */
+  private isSubscriptionOperation(request: GraphQLRequest): boolean {
+    const document = parse(request.query);
+    const operation = getOperationAST(document, request.operationName ?? null);
+    return !operation || operation.operation === OperationTypeNode.SUBSCRIPTION;
   }
 
   /**
@@ -301,8 +385,10 @@ export class WebSocketHandler<TContext = unknown> {
     subscriptionId: string
   ): void {
     socket.data.subscriptions.delete(subscriptionId);
-    this.subscriptionManager.unsubscribe(subscriptionId);
-    this.onComplete?.(socket, subscriptionId);
+    // Scoped to THIS connection: operation ids are unique per connection, so
+    // an unscoped teardown would drop another client's subscription
+    this.subscriptionManager.unsubscribe(socket.data.connectionId, subscriptionId);
+    this.invokeHook('onComplete hook', () => this.onComplete?.(socket, subscriptionId));
   }
 
   /**
@@ -326,6 +412,7 @@ export class WebSocketHandler<TContext = unknown> {
 
     // Unsubscribe all subscriptions
     this.subscriptionManager.unsubscribeConnection(connectionId);
+    socket.data.subscriptions.clear();
 
     // Call onDisconnect hook
     await this.onDisconnect?.(socket);
@@ -339,11 +426,21 @@ export class WebSocketHandler<TContext = unknown> {
     message: (socket: ServerWebSocket<WebSocketContext>, message: string | Buffer) => void;
     close: (socket: ServerWebSocket<WebSocketContext>) => void;
   } {
+    // Bun's callbacks are `void`-returning slots: a promise dropped into one
+    // rejects with nobody watching, which is an unhandled rejection and by
+    // default aborts the process. Every async path is terminated here.
     return {
       open: (socket: ServerWebSocket<WebSocketContext>) => this.handleOpen(socket),
-      message: (socket: ServerWebSocket<WebSocketContext>, message: string | Buffer) =>
-        this.handleMessage(socket, message),
-      close: (socket: ServerWebSocket<WebSocketContext>) => this.handleClose(socket),
+      message: (socket: ServerWebSocket<WebSocketContext>, message: string | Buffer) => {
+        void this.handleMessage(socket, message).catch((error) => {
+          console.error('WebSocket message handling failed:', error);
+        });
+      },
+      close: (socket: ServerWebSocket<WebSocketContext>) => {
+        void this.handleClose(socket).catch((error) => {
+          console.error('onDisconnect failed:', error);
+        });
+      },
     };
   }
 }

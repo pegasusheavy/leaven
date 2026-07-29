@@ -38,12 +38,14 @@
     "http",
     "server"
   ],
-  "author": "Pegasus Heavy Industries LLC",
+  "author": "Joseph Quinn",
   "license": "Apache-2.0",
   "dependencies": {
     "@leaven-graphql/core": "workspace:*",
     "@leaven-graphql/context": "workspace:*",
     "@leaven-graphql/errors": "workspace:*",
+    "@leaven-graphql/playground": "workspace:*",
+    "@leaven-graphql/ws": "workspace:*",
     "graphql": "^16.8.0"
   },
   "devDependencies": {

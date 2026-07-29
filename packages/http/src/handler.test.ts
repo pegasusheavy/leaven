@@ -1,0 +1,566 @@
+/**
+ * @leaven-graphql/http - HTTP handler tests
+ *
+ * Copyright 2026 Joseph Quinn
+ * Licensed under the Apache License, Version 2.0
+ */
+
+import { describe, test, expect } from 'bun:test';
+import { GraphQLObjectType, GraphQLSchema, GraphQLString } from 'graphql';
+import { AuthenticationError, NotFoundError } from '@leaven-graphql/errors';
+import { createHandler, createBunHandler } from './handler';
+
+const schema = new GraphQLSchema({
+  query: new GraphQLObjectType({
+    name: 'Query',
+    fields: {
+      hello: {
+        type: GraphQLString,
+        resolve: () => 'world',
+      },
+    },
+  }),
+});
+
+/** A schema whose `missing` field always fails with a coded Leaven error */
+const partialFailureSchema = new GraphQLSchema({
+  query: new GraphQLObjectType({
+    name: 'Query',
+    fields: {
+      ok: {
+        type: GraphQLString,
+        resolve: () => 'fine',
+      },
+      missing: {
+        type: GraphQLString,
+        resolve: () => {
+          throw new NotFoundError('User not found');
+        },
+      },
+    },
+  }),
+});
+
+function postRequest(
+  body: string,
+  headers: Record<string, string> = { 'Content-Type': 'application/json' }
+): Request {
+  return new Request('http://localhost/graphql', {
+    method: 'POST',
+    headers,
+    body,
+  });
+}
+
+describe('createHandler', () => {
+  test('should execute a POST query', async () => {
+    const handler = createHandler({ schema });
+
+    const response = await handler(postRequest(JSON.stringify({ query: '{ hello }' })));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data).toEqual({ hello: 'world' });
+  });
+
+  test('should execute a GET query via query parameters', async () => {
+    const handler = createHandler({ schema });
+
+    const response = await handler(
+      new Request('http://localhost/graphql?query={ hello }')
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data).toEqual({ hello: 'world' });
+  });
+
+  test('should return 400 when query is missing', async () => {
+    const handler = createHandler({ schema });
+
+    const response = await handler(postRequest(JSON.stringify({})));
+
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.errors[0].message).toBe('Query is required');
+  });
+
+  test('should return 405 for disallowed methods', async () => {
+    const handler = createHandler({ schema });
+
+    const response = await handler(
+      new Request('http://localhost/graphql', { method: 'DELETE' })
+    );
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get('Allow')).toContain('POST');
+  });
+
+  test('should answer CORS preflight when cors is enabled', async () => {
+    const handler = createHandler({ schema, cors: true });
+
+    const response = await handler(
+      new Request('http://localhost/graphql', { method: 'OPTIONS' })
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+  });
+
+  test('should include CORS headers on responses when cors is enabled', async () => {
+    const handler = createHandler({ schema, cors: true });
+
+    const response = await handler(postRequest(JSON.stringify({ query: '{ hello }' })));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+  });
+
+  describe('playground', () => {
+    test('should serve HTML for a browser-style GET when enabled', async () => {
+      const handler = createHandler({ schema, playground: true });
+
+      const response = await handler(
+        new Request('http://localhost/graphql', {
+          headers: { Accept: 'text/html,application/xhtml+xml' },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toContain('text/html');
+      const html = await response.text();
+      expect(html.toLowerCase()).toContain('graphiql');
+    });
+
+    test('should embed the configured endpoint path', async () => {
+      const handler = createHandler({ schema, playground: true, path: '/custom' });
+
+      const response = await handler(
+        new Request('http://localhost/custom', {
+          headers: { Accept: 'text/html' },
+        })
+      );
+
+      const html = await response.text();
+      expect(html).toContain('/custom');
+    });
+
+    test('should still execute a GET with a query parameter', async () => {
+      const handler = createHandler({ schema, playground: true });
+
+      const response = await handler(
+        new Request('http://localhost/graphql?query={ hello }', {
+          headers: { Accept: 'text/html' },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Content-Type')).toContain('application/json');
+      const body = await response.json();
+      expect(body.data).toEqual({ hello: 'world' });
+    });
+
+    test('should not serve HTML when the request does not accept it', async () => {
+      const handler = createHandler({ schema, playground: true });
+
+      const response = await handler(
+        new Request('http://localhost/graphql', {
+          headers: { Accept: 'application/json' },
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.errors[0].message).toBe('Query is required');
+    });
+
+    test('should return 400 for browser GET when playground is disabled', async () => {
+      const handler = createHandler({ schema, playground: false });
+
+      const response = await handler(
+        new Request('http://localhost/graphql', {
+          headers: { Accept: 'text/html' },
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.errors[0].message).toBe('Query is required');
+    });
+  });
+
+  describe('maxBodySize', () => {
+    test('should reject a body that exceeds the limit', async () => {
+      const handler = createHandler({ schema, maxBodySize: 32 });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: `{ hello } # ${'x'.repeat(1024)}` }))
+      );
+
+      expect(response.status).toBe(413);
+      const body = await response.json();
+      expect(body.errors[0].extensions.code).toBe('PAYLOAD_TOO_LARGE');
+    });
+
+    test('should reject an oversized body even with a lying Content-Length', async () => {
+      const handler = createHandler({ schema, maxBodySize: 32 });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: `{ hello } # ${'x'.repeat(1024)}` }), {
+          'Content-Type': 'application/json',
+          'Content-Length': '10',
+        })
+      );
+
+      expect(response.status).toBe(413);
+    });
+
+    test('should reject an honest oversized Content-Length without reading the body', async () => {
+      const handler = createHandler({ schema, maxBodySize: 32 });
+
+      // Reading this stream throws. If the Content-Length fast path is
+      // removed, the handler reads the body and this test fails.
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(new Error('body must not be read'));
+        },
+      });
+
+      const response = await handler(
+        new Request('http://localhost/graphql', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': '1024',
+          },
+          body: stream,
+        })
+      );
+
+      expect(response.status).toBe(413);
+      const body = await response.json();
+      expect(body.errors[0].extensions.code).toBe('PAYLOAD_TOO_LARGE');
+    });
+
+    test('should reject an oversized body with no explicit maxBodySize', async () => {
+      const handler = createHandler({ schema });
+
+      const response = await handler(
+        postRequest(
+          JSON.stringify({ query: `{ hello } # ${'x'.repeat(1_100_000)}` })
+        )
+      );
+
+      expect(response.status).toBe(413);
+      const body = await response.json();
+      expect(body.errors[0].extensions.code).toBe('PAYLOAD_TOO_LARGE');
+    });
+
+    test('should return 400 when the body stream fails mid-read', async () => {
+      const handler = createHandler({ schema, maxBodySize: 1024 });
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"query"'));
+          controller.error(new Error('client went away'));
+        },
+      });
+
+      const response = await handler(
+        new Request('http://localhost/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: stream,
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.errors[0].extensions.code).toBe('BAD_REQUEST');
+    });
+
+    test('should return 400 when the body read exceeds bodyReadTimeoutMs', async () => {
+      const handler = createHandler({
+        schema,
+        maxBodySize: 1024,
+        bodyReadTimeoutMs: 10,
+      });
+
+      // A body that never completes: the deadline is the only way out.
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{'));
+        },
+      });
+
+      const response = await handler(
+        new Request('http://localhost/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: stream,
+        })
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.errors[0].message).toMatch(/Timed out reading request body/);
+    });
+
+    test('should cancel the read deadline once the body has been read', async () => {
+      // A distinctive delay so the deadline timer is identifiable among any
+      // other timers the request happens to schedule.
+      const DEADLINE_MS = 424_242;
+      const handler = createHandler({ schema, bodyReadTimeoutMs: DEADLINE_MS });
+
+      const realSetTimeout = globalThis.setTimeout;
+      const realClearTimeout = globalThis.clearTimeout;
+
+      let deadlineTimer: unknown = null;
+      let cleared = false;
+
+      globalThis.setTimeout = ((
+        callback: (...args: unknown[]) => void,
+        ms?: number,
+        ...args: unknown[]
+      ) => {
+        const id = realSetTimeout(callback, ms, ...args);
+        if (ms === DEADLINE_MS) {
+          deadlineTimer = id;
+        }
+        return id;
+      }) as unknown as typeof setTimeout;
+
+      globalThis.clearTimeout = ((id?: unknown) => {
+        if (deadlineTimer !== null && id === deadlineTimer) {
+          cleared = true;
+        }
+        return realClearTimeout(id as Parameters<typeof clearTimeout>[0]);
+      }) as unknown as typeof clearTimeout;
+
+      let response: Response;
+      try {
+        response = await handler(postRequest(JSON.stringify({ query: '{ hello }' })));
+      } finally {
+        globalThis.setTimeout = realSetTimeout;
+        globalThis.clearTimeout = realClearTimeout;
+      }
+
+      expect(response.status).toBe(200);
+      // A deadline that is never cancelled pins a timer, an abort listener and
+      // a reject closure for its full duration on every completed POST.
+      expect(deadlineTimer).not.toBeNull();
+      expect(cleared).toBe(true);
+    });
+
+    test('should reject an oversized streamed body without Content-Length', async () => {
+      const handler = createHandler({ schema, maxBodySize: 32 });
+
+      const chunk = new TextEncoder().encode('x'.repeat(64));
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(chunk);
+          controller.enqueue(chunk);
+          controller.close();
+        },
+      });
+
+      const response = await handler(
+        new Request('http://localhost/graphql', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: stream,
+        })
+      );
+
+      expect(response.status).toBe(413);
+    });
+
+    test('should accept a body within the limit', async () => {
+      const handler = createHandler({ schema, maxBodySize: 1024 });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: '{ hello }' }))
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data).toEqual({ hello: 'world' });
+    });
+  });
+
+  describe('body parse failures', () => {
+    test('should return 400 for invalid JSON', async () => {
+      const handler = createHandler({ schema });
+
+      const response = await handler(postRequest('not json'));
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.errors[0].message).toMatch(/Invalid JSON/);
+      expect(body.errors[0].extensions.code).toBe('BAD_REQUEST');
+    });
+
+    test('should return 400 for an unsupported content type', async () => {
+      const handler = createHandler({ schema });
+
+      const response = await handler(
+        postRequest('not supported', { 'Content-Type': 'text/plain' })
+      );
+
+      expect(response.status).toBe(400);
+      const body = await response.json();
+      expect(body.errors[0].message).toMatch(/Unsupported content type/);
+    });
+  });
+
+  describe('error mapping', () => {
+    test('should use LeavenError statusCode for thrown Leaven errors', async () => {
+      const handler = createHandler({
+        schema,
+        context: () => {
+          throw new AuthenticationError('Not authenticated');
+        },
+      });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: '{ hello }' }))
+      );
+
+      expect(response.status).toBe(401);
+      const body = await response.json();
+      expect(body.errors[0].message).toBe('Not authenticated');
+      expect(body.errors[0].extensions.code).toBe('UNAUTHENTICATED');
+    });
+
+    test('should return 500 for non-Leaven errors', async () => {
+      const handler = createHandler({
+        schema,
+        context: () => {
+          throw new Error('kaboom');
+        },
+      });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: '{ hello }' }))
+      );
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.errors[0].extensions.code).toBe('INTERNAL_ERROR');
+    });
+
+    test('should mask a context factory failure when masking is enabled', async () => {
+      const handler = createHandler({
+        schema,
+        errorFormatting: { maskErrors: true },
+        context: () => {
+          throw new Error('connect ECONNREFUSED 10.0.3.14:5432');
+        },
+      });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: '{ hello }' }))
+      );
+
+      expect(response.status).toBe(500);
+      const body = await response.json();
+      expect(body.errors[0].message).not.toContain('ECONNREFUSED');
+      expect(body.errors[0].message).toBe('An unexpected error occurred');
+      expect(body.errors[0].extensions.code).toBe('INTERNAL_ERROR');
+    });
+
+    test('should not destroy an execution error when errorFormatting is set', async () => {
+      const handler = createHandler({
+        schema: partialFailureSchema,
+        errorFormatting: { maskErrors: true },
+      });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: '{ ok missing }' }))
+      );
+
+      const body = await response.json();
+      expect(body.errors[0].message).toBe('User not found');
+      expect(body.errors[0].message).not.toBe('[object Object]');
+      expect(body.errors[0].extensions.code).toBe('NOT_FOUND');
+      expect(body.errors[0].path).toEqual(['missing']);
+      expect(body.errors[0].locations).toBeDefined();
+    });
+
+    test('should stay 200 for a partial success from a coded resolver error', async () => {
+      const handler = createHandler({
+        schema: partialFailureSchema,
+        errorFormatting: { maskErrors: true },
+      });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: '{ ok missing }' }))
+      );
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.data).toEqual({ ok: 'fine', missing: null });
+    });
+
+    test('should still mask an uncoded execution error', async () => {
+      const leakySchema = new GraphQLSchema({
+        query: new GraphQLObjectType({
+          name: 'Query',
+          fields: {
+            hello: {
+              type: GraphQLString,
+              resolve: () => {
+                throw new Error('connect ECONNREFUSED 10.0.3.14:5432');
+              },
+            },
+          },
+        }),
+      });
+
+      const handler = createHandler({
+        schema: leakySchema,
+        errorFormatting: { maskErrors: true },
+      });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: '{ hello }' }))
+      );
+
+      const body = await response.json();
+      expect(body.errors[0].message).not.toContain('ECONNREFUSED');
+      expect(body.errors[0].message).toBe('An unexpected error occurred');
+      expect(body.errors[0].extensions.code).toBe('INTERNAL_ERROR');
+    });
+
+    test('should not mask a LeavenError when masking is enabled', async () => {
+      const handler = createHandler({
+        schema,
+        errorFormatting: { maskErrors: true },
+        context: () => {
+          throw new AuthenticationError('Not authenticated');
+        },
+      });
+
+      const response = await handler(
+        postRequest(JSON.stringify({ query: '{ hello }' }))
+      );
+
+      expect(response.status).toBe(401);
+      const body = await response.json();
+      expect(body.errors[0].message).toBe('Not authenticated');
+      expect(body.errors[0].extensions.code).toBe('UNAUTHENTICATED');
+    });
+  });
+});
+
+describe('createBunHandler', () => {
+  test('should behave like createHandler', async () => {
+    const handler = createBunHandler({ schema });
+
+    const response = await handler(postRequest(JSON.stringify({ query: '{ hello }' })));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.data).toEqual({ hello: 'world' });
+  });
+});
