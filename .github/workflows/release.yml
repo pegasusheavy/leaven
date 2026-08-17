@@ -71,7 +71,7 @@ jobs:
         run: pnpm test
 
       - name: Create version pull request
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           version: pnpm version-packages
           commit: 'chore: version packages'
@@ -113,7 +113,7 @@ jobs:
         run: pnpm test
 
       - name: Publish to npm
-        uses: changesets/action@v1
+        uses: changesets/action@v2
         with:
           publish: pnpm release
         env:
